@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "326618392344",
+    "project_id": "concepcion-pay-parking",
+    "storage_bucket": "concepcion-pay-parking.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:326618392344:android:5552251ba1c692c38b206d",
+        "android_client_info": {
+          "package_name": "com.concepcion.payparking"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDv0jk5pWwPUbdZmuF6jBduA4882qGArZI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:326618392344:android:fe30912a12ca4ec58b206d",
+        "android_client_info": {
+          "package_name": "com.concepcion.yos_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDv0jk5pWwPUbdZmuF6jBduA4882qGArZI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:326618392344:android:a096ca1fe42ff4c08b206d",
+        "android_client_info": {
+          "package_name": "com.example.yos_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDv0jk5pWwPUbdZmuF6jBduA4882qGArZI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

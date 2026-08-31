@@ -1,0 +1,270 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // A signed-in user is a valid collector once their own collectors/{uid}
+    // doc exists. That doc is created during self-service registration
+    // (see YosRepository.register) — replaces the old single hardcoded UID
+    // now that any collector can sign themselves up. Being a collector is
+    // NOT enough to reach dashboard resources — see hasFaceId() below.
+    function isCollector() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/collectors/$(request.auth.uid));
+    }
+
+    // Mandatory Face ID gate: true only once this account's on-device
+    // enrollment has completed and synced this one boolean back (see
+    // YosRepository.markFaceIdEnrolled) — the actual biometric data never
+    // leaves the device (see FaceAuthService), only this flag does. A
+    // missing field on an older collectors/{uid} doc reads as not-true, so
+    // every pre-existing account starts out gated until it enrolls too.
+    function hasFaceId() {
+      return isCollector()
+        && get(/databases/$(database)/documents/collectors/$(request.auth.uid)).data.face_id_enrolled == true;
+    }
+
+    // Admin is a flag on the caller's own collectors/{uid} doc, granted
+    // either at registration (Register screen's Collector/Admin role
+    // picker, see YosRepository.completeRegistration) or afterward via the
+    // one-time self-claim (YosRepository.claimAdmin) — see the update rule
+    // below for the latter's exact conditions. Requires hasFaceId() too:
+    // admin actions are dashboard resources like any other.
+    function isAdmin() {
+      return hasFaceId()
+        && get(/databases/$(database)/documents/collectors/$(request.auth.uid)).data.is_admin == true;
+    }
+
+    match /collectors/{uid} {
+      // Registration writes only the plain profile fields for the caller's
+      // own uid — name, username, phone, birthday, plus the two flags below
+      // — no room for someone to grant themselves extra fields or write
+      // another account's doc. Face data never lands here; it's kept
+      // device-local (see FaceAuthService), never synced to Firestore —
+      // face_id_enrolled is only ever created false; it can only flip to
+      // true afterward, via the narrow update rule below. is_admin may
+      // only be true if the one-time admin_bootstrap sentinel hasn't been
+      // claimed yet — i.e. only the very first registration that asks for
+      // Admin on this deployment can set it, matching the transaction in
+      // YosRepository.completeRegistration. There's no password field on
+      // this doc either way — account passwords live in Firebase Auth,
+      // never in Firestore. username uniqueness isn't enforced here; it
+      // falls out of Firebase Auth's own email-already-in-use check on the
+      // synthetic email this doc's username derives (see
+      // core/username.dart), since createUserWithEmailAndPassword runs
+      // before this create ever reaches Firestore.
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(
+             ['name', 'username', 'phone', 'birthday', 'created_at', 'is_admin', 'face_id_enrolled'])
+        && request.resource.data.face_id_enrolled == false
+        && (
+          request.resource.data.is_admin == false
+          || (request.resource.data.is_admin == true
+              && !exists(/databases/$(database)/documents/meta/admin_bootstrap))
+        );
+      // A collector reads their own doc regardless of Face ID status —
+      // the app needs this read to work even when gated, so it can learn
+      // to redirect to enrollment in the first place (see RootShell). The
+      // admin can read everyone's, for the Collectors screen (see
+      // YosRepository.allCollectors) — that still requires the admin's own
+      // Face ID via isAdmin().
+      allow read: if (request.auth != null && request.auth.uid == uid) || isAdmin();
+      // Exactly two in-place edits are self-serve, each touching only its
+      // own single field:
+      //  - is_admin, a one-way false-to-true flip while the
+      //    admin_bootstrap sentinel is still unclaimed (see
+      //    YosRepository.claimAdmin);
+      //  - face_id_enrolled, settable to true and only ever true (see
+      //    YosRepository.markFaceIdEnrolled) — re-affirming an
+      //    already-true value is allowed too (a successful Face ID
+      //    sign-in backfills this for an account that enrolled a face
+      //    locally before this flag existed — see
+      //    FaceLoginScreen._scan), but there is no path here that can
+      //    ever write it back to false.
+      // Nothing else is self-serve (no renaming someone else, no revoking
+      // admin or Face ID, no touching another account's doc). There's no
+      // "password reset approved" flag either — resetting a password is
+      // just the delete rule below (see YosRepository.deactivateCollector),
+      // reachable directly from CollectorsScreen for any collector, no
+      // separate approval step needed.
+      //
+      // A THIRD path, below, isn't self-serve at all: any current admin
+      // may flip is_admin on any OTHER collector's doc, in either
+      // direction (see YosRepository.setAdminRole / CollectorsScreen) —
+      // this is the in-app "assign/transfer Admin" feature, replacing
+      // what used to require a manual Firestore Console edit. It's kept
+      // strictly separate from the self-serve branches above
+      // (`request.auth.uid != uid`) so no admin can ever grant or revoke
+      // their *own* admin status through this path — only another admin
+      // can do that to them. That one restriction is what guarantees the
+      // app can never be talked down to zero admins by a single in-app
+      // action: handing off full control always takes two people (or one
+      // person acting from two different admin accounts), never one tap.
+      allow update: if
+        (
+          request.auth != null
+          && request.auth.uid == uid
+          && (
+            (
+              !exists(/databases/$(database)/documents/meta/admin_bootstrap)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_admin'])
+              && resource.data.is_admin == false
+              && request.resource.data.is_admin == true
+            )
+            ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['face_id_enrolled'])
+              && request.resource.data.face_id_enrolled == true
+            )
+          )
+        )
+        ||
+        (
+          isAdmin()
+          && request.auth.uid != uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_admin'])
+        );
+      // Deleting is how the admin deactivates an account — see
+      // YosRepository.deactivateCollector — there's no admin-console
+      // password reset either, so a locked-out collector just re-registers.
+      allow delete: if isAdmin();
+    }
+
+    // Cloud copy of a collector's face embedding — lets a face enrolled on
+    // one phone (see YosRepository.syncFaceEmbedding, called right after
+    // FaceEnrollScreen's on-device capture) get recognized on a
+    // *different* phone that's never seen it before (see
+    // FaceLoginScreen._tryCloudMatch), instead of every single phone
+    // needing its own separate enrollment for the same collector. A
+    // deliberate, accepted trade of some privacy for that convenience:
+    // unlike collectors/{uid} (self-or-admin read only), this is readable
+    // by any authenticated session — including the short-lived anonymous
+    // one _tryCloudMatch signs in with, since that lookup runs before any
+    // real sign-in exists on the unfamiliar phone yet. The actual sign-in
+    // this can lead to still requires that collector's real password once
+    // per new device (see FaceLoginScreen's password prompt) — a face
+    // match here only identifies who it might be, it never grants access
+    // by itself.
+    match /face_profiles/{uid} {
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'email', 'embedding', 'updated_at'])
+        && request.resource.data.uid == uid;
+      allow read: if request.auth != null;
+      // Self, or an admin cleaning up a deactivated account (see
+      // YosRepository.deactivateCollector) — mirrors collectors/{uid}'s
+      // own read rule shape, so a removed collector's face can't keep
+      // surfacing as a cloud match anywhere.
+      allow delete: if (request.auth != null && request.auth.uid == uid) || isAdmin();
+    }
+
+    // One-time sentinel claimed atomically alongside the first Admin-role
+    // collectors/ doc write (YosRepository.completeRegistration) — its
+    // existence is what stops anyone else from also becoming admin
+    // afterward. Deliberately readable pre-Face-ID (request.auth != null,
+    // not hasFaceId()) since registration itself needs to check it before
+    // any enrollment exists. update/delete are hard-blocked even for an
+    // admin — reassigning the built-in admin account is a manual Firestore
+    // Console operation (outside these rules, under the project owner's
+    // own IAM permissions), never an in-app one.
+    match /meta/admin_bootstrap {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['admin_uid'])
+        && request.resource.data.admin_uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // "Please help me back in" pings from a locked-out collector — see
+    // YosRepository.requestAccessReset / AccessRequestScreen. Deliberately
+    // create-able while signed out (a locked-out collector is, by
+    // definition, not authenticated) with just a name and no verification
+    // — the admin recognizes who it is out-of-band before acting, same
+    // trust model as the old "call/message the admin" recovery path this
+    // replaces. Only the admin can read the inbox or resolve a request.
+    match /access_requests/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['name', 'requested_at', 'status'])
+        && request.resource.data.status == 'pending';
+      // Split get/list: the admin still needs to *list* every pending
+      // request for the inbox (see YosRepository.pendingAccessRequests),
+      // which stays admin-only — but the collector who filed one is, by
+      // definition, not authenticated (see requestAccessReset), and their
+      // own AccessRequestScreen needs to watch this *one* document by ID
+      // to notice once the admin grants it (see resolveAccessRequest /
+      // AccessRequest.newUsername) and show them where to type their new
+      // passcode. Getting a single doc you already know the ID of is a
+      // much narrower exposure than listing the whole collection, and
+      // nothing in this doc is sensitive beyond a name and a username —
+      // the actual passcode is never stored here, only told to the
+      // collector out-of-band by the admin.
+      allow get: if true;
+      allow list: if isAdmin();
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'new_username']);
+      allow delete: if isAdmin();
+    }
+
+    // Per-vehicle-type fee overrides, editable only by the admin — see
+    // FeeSettingsService. Any collector with Face ID enrolled can read
+    // them, since logging an entry needs the live rate; write already
+    // requires isAdmin(), which itself now requires Face ID too.
+    match /settings/fees {
+      allow read: if hasFaceId();
+      allow write: if isAdmin();
+    }
+
+    // RFID loyalty points rate — see PointsSettingsService. Same shape as
+    // settings/fees just above: any enrolled collector reads it (needed
+    // to compute/redeem points at entry time), only the admin sets it.
+    match /settings/points {
+      allow read: if hasFaceId();
+      allow write: if isAdmin();
+    }
+
+    // Vehicle registry (see VehicleRegistry / RegisteredVehicle) — plate
+    // number is the doc ID. Any enrolled collector can self-serve
+    // register/update/delete a vehicle, same trust level as logging a
+    // transaction below, rather than the tighter per-field diffing used
+    // for collectors/{uid}. Covers both plain registration fields and the
+    // RFID points fields (rfid_tag, rfid_tag_key, points) written by
+    // VehicleRegistry.register/touch.
+    match /registered_vehicles/{plateKey} {
+      allow read: if hasFaceId();
+      allow create, update: if hasFaceId()
+        && request.resource.data.keys().hasOnly([
+          'plate_number', 'plate_key', 'driver_name', 'vehicle_type',
+          'default_zone_id', 'registered_at', 'entry_count', 'last_seen',
+          'driver_license_photo_path', 'or_cr_photo_path',
+          'rfid_tag', 'rfid_tag_key', 'points'
+        ]);
+      allow delete: if hasFaceId();
+    }
+
+    // Core dashboard resource — mandatory Face ID gate applies in full:
+    // no read, create, or update without hasFaceId().
+    match /transactions/{txId} {
+      allow read: if hasFaceId();
+      allow create: if hasFaceId()
+        && request.resource.data.keys().hasAll([
+          'tracking_id','driver_name','plate_number','vehicle_type',
+          'fee','zone_id','timestamp','printed'
+        ]);
+      // Only the 'printed' flag may ever change; entries are otherwise final.
+      allow update: if hasFaceId()
+        && request.resource.data.diff(resource.data)
+             .affectedKeys().hasOnly(['printed']);
+      allow delete: if false;
+    }
+
+    // Immutable audit trail: append-only, never editable, never deletable.
+    // Reading the trail is a dashboard resource (gated), but *writing* an
+    // entry deliberately isn't — login/logout/register events fire before
+    // an account has necessarily enrolled Face ID, and a true, honest
+    // audit trail needs to record those attempts regardless of gate state.
+    match /audit_logs/{logId} {
+      allow read: if hasFaceId();
+      allow create: if request.auth != null;
+      allow update, delete: if false;
+    }
+  }
+}
