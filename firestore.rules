@@ -52,7 +52,16 @@ service cloud.firestore {
       // synthetic email this doc's username derives (see
       // core/username.dart), since createUserWithEmailAndPassword runs
       // before this create ever reaches Firestore.
-      allow create: if request.auth != null
+      // The second branch is the trash bin's restore path (see
+      // YosRepository.restoreCollector): an admin recreating some OTHER
+      // collector's doc verbatim from their own trashed_collectors/{uid}
+      // copy, so a mistaken removal doesn't force a from-scratch
+      // re-registration. Deliberately skips the face_id_enrolled/
+      // admin_bootstrap checks the self-registration branch enforces —
+      // those only guard what a brand-new account can claim for itself;
+      // an admin restoring a doc they can already fully control via
+      // setAdminRole/deactivateCollector isn't gaining any new power here.
+      allow create: if (request.auth != null
         && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(
              ['name', 'username', 'phone', 'birthday', 'created_at', 'is_admin', 'face_id_enrolled'])
@@ -61,7 +70,11 @@ service cloud.firestore {
           request.resource.data.is_admin == false
           || (request.resource.data.is_admin == true
               && !exists(/databases/$(database)/documents/meta/admin_bootstrap))
-        );
+        ))
+        || (isAdmin()
+          && request.auth.uid != uid
+          && request.resource.data.keys().hasOnly(
+               ['name', 'username', 'phone', 'birthday', 'created_at', 'is_admin', 'face_id_enrolled']));
       // A collector reads their own doc regardless of Face ID status —
       // the app needs this read to work even when gated, so it can learn
       // to redirect to enrollment in the first place (see RootShell). The
@@ -116,6 +129,31 @@ service cloud.firestore {
               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['face_id_enrolled'])
               && request.resource.data.face_id_enrolled == true
             )
+            ||
+            // Self-service "Edit" on ProfileScreen — the plain details
+            // captured at registration, and nothing else: no username, no
+            // role, no recovery-relevant field. Requires hasFaceId() (not
+            // just isCollector()) so a not-yet-enrolled account can't use
+            // this to touch its own doc before the app would otherwise let
+            // it in.
+            (
+              hasFaceId()
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'phone', 'birthday'])
+              && request.resource.data.name is string
+              && request.resource.data.name.size() > 0
+              && (request.resource.data.phone == null || request.resource.data.phone is string)
+              && (request.resource.data.birthday == null || request.resource.data.birthday is timestamp)
+            )
+            ||
+            // Profile photo — its own branch, separate from the
+            // name/phone/birthday one above, since ProfileScreen applies a
+            // new photo immediately on pick rather than bundling it into
+            // the Save changes / Cancel form flow those three fields use.
+            (
+              hasFaceId()
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photo_url'])
+              && request.resource.data.photo_url is string
+            )
           )
         )
         ||
@@ -127,6 +165,27 @@ service cloud.firestore {
       // Deleting is how the admin deactivates an account — see
       // YosRepository.deactivateCollector — there's no admin-console
       // password reset either, so a locked-out collector just re-registers.
+      allow delete: if isAdmin();
+    }
+
+    // Trash bin for deactivated collectors — see
+    // YosRepository.deactivateCollector/restoreCollector/
+    // permanentlyDeleteCollector and CollectorsScreen's Trash entry point.
+    // Doc ID stays the same Firebase Auth uid the original collectors/{uid}
+    // doc had, so restoring just recreates that doc under the same ID (see
+    // the trash-restore branch on collectors/{uid}'s create rule above).
+    match /trashed_collectors/{uid} {
+      allow read: if isAdmin();
+      // Only the admin action that moves an account to trash creates this
+      // doc — see deactivateCollector, which copies the original doc's
+      // fields plus who trashed it and when.
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly([
+             'name', 'username', 'phone', 'birthday', 'created_at',
+             'is_admin', 'face_id_enrolled', 'deactivated_at', 'deactivated_by'
+           ]);
+      // Covers both exits from the trash bin: restoring (recreate under
+      // collectors/{uid}, then delete here) and permanently deleting.
       allow delete: if isAdmin();
     }
 
@@ -235,6 +294,7 @@ service cloud.firestore {
           'plate_number', 'plate_key', 'driver_name', 'vehicle_type',
           'default_zone_id', 'registered_at', 'entry_count', 'last_seen',
           'driver_license_photo_path', 'or_cr_photo_path',
+          'driver_license_photo_url', 'or_cr_photo_url',
           'rfid_tag', 'rfid_tag_key', 'points'
         ]);
       allow delete: if hasFaceId();

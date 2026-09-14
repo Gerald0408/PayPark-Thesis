@@ -11,6 +11,7 @@ class Collector {
     required this.createdAt,
     this.phone,
     this.birthday,
+    this.photoUrl,
   });
 
   final String uid;
@@ -23,6 +24,11 @@ class Collector {
   // account registered before that change simply has neither field.
   final String? phone;
   final DateTime? birthday;
+
+  // Null until the collector sets one from ProfileScreen (see
+  // CollectorPhotoStorage) — falls back to initials everywhere this is
+  // shown.
+  final String? photoUrl;
 
   /// `is`-checked rather than `as`-cast on every field: a doc with a
   /// field of the wrong type (bad manual edit, a stale/partial write,
@@ -39,6 +45,7 @@ class Collector {
     final createdAt = d['created_at'];
     final phone = d['phone'];
     final birthday = d['birthday'];
+    final photoUrl = d['photo_url'];
     return Collector(
       uid: doc.id,
       name: name is String ? name : '',
@@ -47,6 +54,7 @@ class Collector {
       createdAt: createdAt is Timestamp ? createdAt.toDate() : DateTime.now(),
       phone: phone is String ? phone : null,
       birthday: birthday is Timestamp ? birthday.toDate() : null,
+      photoUrl: photoUrl is String ? photoUrl : null,
     );
   }
 }

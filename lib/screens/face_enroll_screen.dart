@@ -6,11 +6,13 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
+import '../core/theme.dart';
 import '../models/transaction.dart';
 import '../services/face_auth_service.dart';
 import '../services/face_embedding_service.dart';
 import '../services/face_geometry.dart';
 import '../services/firestore_service.dart';
+import '../services/locale_controller.dart';
 import '../widgets/scanner_frame.dart';
 import '../widgets/toast.dart';
 import 'intro_screen.dart';
@@ -54,7 +56,6 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
   CameraController? _cam;
   FaceDetector? _fd;
 
-  bool _showIntro = true;
   bool _initializing = true;
   bool _capturing = false;
   bool _saving = false;
@@ -62,26 +63,42 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
   List<double>? _captured;
   double _progress = 0;
 
-  // More attempts than strictly needed to find one good frame — every
-  // frame that passes quality gets averaged together (see
-  // FaceEmbeddingService.average), so more good frames means a steadier
-  // template. Tuned down from 5 to keep the whole capture inside a ~3-5s
-  // budget — kept in step with FaceLoginScreen's _maxAttempts.
-  static const _maxAttempts = 4;
+  // Shown right above the face circle, live, throughout the scan — a
+  // single frontal capture only now (no more blink/turn-left/turn-right
+  // follow-up phases, which is what used to make enrollment take so
+  // long: three extra scans, each with its own pose to hold).
+  String get _instruction => t('Look straight into the camera and hold still',
+      'Tumingin nang diretso sa camera at huwag gumalaw');
 
-  /// Camera/ML Kit init is deferred until "Get Started" is tapped on the
-  /// intro splash, rather than firing (and asking for camera permission)
-  /// the instant this screen opens.
-  Future<void> _getStarted() async {
-    setState(() => _showIntro = false);
-    await _init();
+  // Good frames needed before capture is done — every frame that passes
+  // FaceGeometry.qualityIssue's strict gate gets averaged together (see
+  // FaceEmbeddingService.average) into the stored template. There's no
+  // attempt cap: a frame that doesn't pass just updates [_error] live and
+  // the loop keeps shooting on its own (see _capture) rather than bailing
+  // out to a dead "Capture" button the user has to tap again — the whole
+  // point of a guided scan is that it corrects itself as the user follows
+  // the on-screen feedback, not that it gives up.
+  static const _targetFrames = 3;
+
+  // Delay between shots — just enough for the camera/ML Kit pipeline to
+  // free up between frames, not a deliberate slow-down.
+  static const _shotDelay = Duration(milliseconds: 45);
+
+  @override
+  void initState() {
+    super.initState();
+    // Camera/ML Kit init (and the camera-permission prompt that comes
+    // with it) now fires the instant this screen opens — no more "Get
+    // Started" splash to tap through first.
+    _init();
   }
 
   Future<void> _init() async {
     if (kIsWeb) {
       setState(() {
         _initializing = false;
-        _error = 'Face capture is only available on the Android app.';
+        _error = t('Face capture is only available on the Android app.',
+            'Available lang ang face capture sa Android app.');
       });
       return;
     }
@@ -91,8 +108,10 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
       setState(() {
         _initializing = false;
         _error = status.isPermanentlyDenied
-            ? 'Camera blocked. Settings > Apps > PayPark > Permissions > Camera'
-            : 'Camera permission denied.';
+            ? t(
+                'Camera blocked. Settings > Apps > PayPark > Permissions > Camera',
+                'Naka-block ang camera. Settings > Apps > PayPark > Permissions > Camera')
+            : t('Camera permission denied.', 'Tinanggihan ang pahintulot sa camera.');
       });
       return;
     }
@@ -105,14 +124,14 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
     // registering, before anything else has touched the camera). One
     // short settle-and-retry clears it; a real failure (no camera,
     // hardware busy, etc.) still surfaces normally on the retry.
-    for (var attempt = 0; ; attempt++) {
+    for (var attempt = 0;; attempt++) {
       try {
         final cams = await availableCameras();
         if (cams.isEmpty) {
           if (mounted) {
             setState(() {
               _initializing = false;
-              _error = 'No camera found.';
+              _error = t('No camera found.', 'Walang nahanap na camera.');
             });
           }
           return;
@@ -150,7 +169,7 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
         if (mounted) {
           setState(() {
             _initializing = false;
-            _error = 'Camera error: $e';
+            _error = t('Camera error: $e', 'Error sa camera: $e');
           });
         }
         return;
@@ -158,6 +177,13 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
     }
   }
 
+  /// One tap runs the whole burst-and-average loop — no attempt cap, no
+  /// separate blink/turn-side follow-ups anymore: it keeps shooting
+  /// frames, live-updating [_error] with whatever's wrong on each one
+  /// (e.g. "Face the camera straight on"), until [_targetFrames] of them
+  /// pass [FaceGeometry.qualityIssue]'s strict gate, then averages them
+  /// into the stored template. Only stops early if the widget was
+  /// disposed mid-scan (e.g. the user backed out).
   Future<void> _capture() async {
     final cam = _cam;
     final fd = _fd;
@@ -167,54 +193,54 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
     setState(() {
       _capturing = true;
       _error = null;
-      _progress = 0;
     });
     try {
-      String? issue = 'No face found. Center your face in the frame.';
       final vectors = <List<double>>[];
-      for (var attempt = 1; attempt <= _maxAttempts; attempt++) {
-        await Future.delayed(Duration(milliseconds: 100 + attempt * 50));
+      while (vectors.length < _targetFrames) {
+        if (!mounted) return;
+        await Future.delayed(_shotDelay);
         final shot = await cam.takePicture();
-        final faces = await fd.processImage(InputImage.fromFilePath(shot.path));
+        final faces =
+            await fd.processImage(InputImage.fromFilePath(shot.path));
+        String? issue;
         if (faces.isEmpty) {
-          issue = 'No face found. Center your face in the frame.';
-          continue;
+          issue = t('No face found. Center your face in the frame.',
+              'Walang nakitang mukha. I-center ang iyong mukha sa frame.');
+        } else if (faces.length > 1) {
+          issue = t('More than one face in frame.',
+              'Higit sa isang mukha ang nasa frame.');
+        } else {
+          final face = faces.first;
+          issue = FaceGeometry.qualityIssue(face, strict: true);
+          if (issue == null) {
+            final v = await FaceEmbeddingService.instance
+                .extractEmbeddingFromFile(shot.path, face);
+            if (v == null) {
+              issue = t('Couldn\'t read your face clearly. Try again.',
+                  'Hindi maliwanag nabasa ang iyong mukha. Subukan ulit.');
+            } else {
+              vectors.add(v);
+            }
+          }
         }
-        if (faces.length > 1) {
-          issue = 'More than one face in frame.';
-          continue;
-        }
-        // strict: true (the default) — this capture becomes the template
-        // every future login gets compared against, so it's worth holding
-        // enrollment to a tighter pose/eyes-open bar than login uses.
-        final q = FaceGeometry.qualityIssue(faces.first, strict: true);
-        if (q != null) {
-          issue = q;
-          continue;
-        }
-        final v = await FaceEmbeddingService.instance
-            .extractEmbeddingFromFile(shot.path, faces.first);
-        if (v == null) {
-          issue = 'Couldn\'t read your face clearly. Try again.';
-          continue;
-        }
-        vectors.add(v);
         if (mounted) {
-          setState(() => _progress = vectors.length / _maxAttempts);
+          setState(() {
+            _error = issue;
+            _progress = vectors.length / _targetFrames;
+          });
         }
       }
-      final vector =
-          vectors.isEmpty ? null : FaceEmbeddingService.average(vectors);
+
       if (!mounted) return;
       setState(() {
-        _captured = vector;
-        _error = vector == null ? issue : null;
-        _progress = vector == null ? 0 : 1.0;
+        _error = null;
+        _captured = FaceEmbeddingService.average(vectors);
       });
     } catch (e) {
       debugPrint('Face capture failed: $e');
       if (mounted) {
-        setState(() => _error = 'Capture failed. Please try again.');
+        setState(() => _error = t('Capture failed. Please try again.',
+            'Nabigo ang pag-capture. Subukan ulit.'));
       }
     } finally {
       if (mounted) setState(() => _capturing = false);
@@ -256,7 +282,7 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
             .logAudit(AuditAction.faceEnroll, 'Face ID enrolled on device');
       } catch (_) {}
       if (!mounted) return;
-      Toast.success(context, 'Face ID saved');
+      Toast.success(context, t('Face ID saved', 'Na-save ang Face ID'));
       widget.onFinished(context);
     } catch (e) {
       // Same rule as everywhere else here: never surface a raw exception
@@ -264,7 +290,8 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
       // markFaceIdEnrolled's own retries) to the user.
       debugPrint('Face ID save failed: $e');
       if (mounted) {
-        setState(() => _error = 'Couldn\'t save Face ID. Please try again.');
+        setState(() => _error = t('Couldn\'t save Face ID. Please try again.',
+            'Hindi ma-save ang Face ID. Subukan ulit.'));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -299,19 +326,6 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_showIntro) {
-      return Scaffold(
-        body: FaceIdIntro(
-          description: 'FaceID lets you sign in with your face instead of '
-              'typing your password every time. We\'ll capture a few '
-              'frames now and link them to your account, on this device '
-              'only.',
-          onGetStarted: _getStarted,
-          onClose: _closeOrSignOut,
-        ),
-      );
-    }
-
     final ready = _cam?.value.isInitialized == true;
     final hasCapture = _captured != null;
     return Scaffold(
@@ -320,7 +334,7 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
         fit: StackFit.expand,
         children: [
           if (ready)
-            CameraPreview(_cam!)
+            CoverCameraPreview(controller: _cam!)
           else if (_initializing)
             const Center(
                 child: CircularProgressIndicator(color: FaceIdColors.accent))
@@ -328,7 +342,8 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(28),
-                child: Text(_error ?? 'Camera unavailable.',
+                child: Text(
+                    _error ?? t('Camera unavailable.', 'Hindi available ang camera.'),
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Colors.white, fontSize: 15)),
               ),
@@ -344,17 +359,30 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                 final shortest = MediaQuery.of(context).size.shortestSide;
                 final width = (shortest * 0.62).clamp(200.0, 300.0);
                 final height = width * 1.25;
-                return Stack(
-                  children: [
-                    Center(
-                      child: FaceOvalScanner(
+                return Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Instruction right above the circle — visible
+                      // immediately (not just while a scan is running).
+                      if (!hasCapture)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 14),
+                          child: Text(_instruction,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                      FaceOvalScanner(
                         width: width,
                         height: height,
                         scanning: _capturing,
                         success: hasCapture,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 );
               },
             ),
@@ -396,8 +424,9 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                               const SizedBox(height: 2),
                               Text(
                                   hasCapture
-                                      ? 'Face captured'
-                                      : 'Please look into the camera and hold still',
+                                      ? t('Face captured', 'Nakuha ang mukha')
+                                      : t('Follow the prompt below',
+                                          'Sundin ang tagubilin sa ibaba'),
                                   style: const TextStyle(
                                       color: Colors.white70,
                                       fontSize: 13,
@@ -427,18 +456,14 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                       child: ScanProgressBar(
                         progress: _progress,
                         caption: hasCapture
-                            ? 'Captured'
-                            : (_capturing ? 'Scanning.' : null),
+                            ? t('Captured', 'Nakuha na')
+                            : (_capturing ? t('Scanning.', 'Sina-scan.') : null),
                       ),
                     ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                    child: Container(
+                    child: Padding(
                       padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: FaceIdColors.navyMid,
-                        borderRadius: BorderRadius.circular(24),
-                      ),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -460,11 +485,10 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                                 style: FilledButton.styleFrom(
                                   backgroundColor: FaceIdColors.accent,
                                   foregroundColor: FaceIdColors.navyDeep,
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 16),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 16),
                                   shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(999)),
+                                      borderRadius: BorderRadius.circular(999)),
                                 ),
                                 icon: _capturing
                                     ? const SizedBox(
@@ -474,10 +498,11 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                                             strokeWidth: 2,
                                             color: FaceIdColors.navyDeep),
                                       )
-                                    : const Icon(
-                                        Icons.face_retouching_natural),
+                                    : const Icon(Icons.face_retouching_natural),
                                 label: Text(
-                                    _capturing ? 'Reading...' : 'Capture',
+                                    _capturing
+                                        ? t('Reading...', 'Binabasa...')
+                                        : t('Capture', 'Kumuha ng Larawan'),
                                     style: const TextStyle(
                                         fontWeight: FontWeight.w800)),
                               ),
@@ -486,28 +511,32 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                             Row(
                               children: [
                                 Expanded(
-                                  child: OutlinedButton(
+                                  child: FilledButton(
                                     onPressed: _saving
                                         ? null
                                         : () => setState(() {
                                               _captured = null;
                                               _progress = 0;
                                             }),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: Colors.white,
-                                      side: const BorderSide(
-                                          color: Colors.white30),
+                                    style: FilledButton.styleFrom(
+                                      // Same solid amber fill as "Save
+                                      // Face ID" right next to it (not an
+                                      // outline anymore) — onAccent is
+                                      // near-black, giving the requested
+                                      // black-on-orange look.
+                                      backgroundColor: YosColors.accentDeep,
+                                      foregroundColor: YosColors.onAccent,
                                       padding: const EdgeInsets.symmetric(
                                           vertical: 14),
                                       shape: RoundedRectangleBorder(
                                           borderRadius:
                                               BorderRadius.circular(999)),
                                     ),
-                                    child: const FittedBox(
+                                    child: FittedBox(
                                       fit: BoxFit.scaleDown,
-                                      child: Text('Retake',
+                                      child: Text(t('Retake', 'Ulitin'),
                                           maxLines: 1,
-                                          style: TextStyle(
+                                          style: const TextStyle(
                                               fontWeight: FontWeight.w700)),
                                     ),
                                   ),
@@ -517,8 +546,15 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                                   child: FilledButton(
                                     onPressed: _saving ? null : _save,
                                     style: FilledButton.styleFrom(
-                                      backgroundColor: FaceIdColors.good,
-                                      foregroundColor: Colors.white,
+                                      // YosColors.accentDeep/onAccent — the
+                                      // app's actual brand amber, the same
+                                      // pairing the sign-in screen's "Scan
+                                      // Face ID" button uses (see
+                                      // BreathingGlowButton's defaults),
+                                      // not this screen's own one-off mint
+                                      // accent or an unrelated green.
+                                      backgroundColor: YosColors.accentDeep,
+                                      foregroundColor: YosColors.onAccent,
                                       padding: const EdgeInsets.symmetric(
                                           vertical: 14),
                                       shape: RoundedRectangleBorder(
@@ -526,18 +562,20 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                                               BorderRadius.circular(999)),
                                     ),
                                     child: _saving
-                                        ? const SizedBox(
+                                        ? SizedBox(
                                             width: 18,
                                             height: 18,
                                             child: CircularProgressIndicator(
                                                 strokeWidth: 2,
-                                                color: Colors.white),
+                                                color: YosColors.onAccent),
                                           )
-                                        : const FittedBox(
+                                        : FittedBox(
                                             fit: BoxFit.scaleDown,
-                                            child: Text('Save Face ID',
+                                            child: Text(
+                                                t('Save Face ID',
+                                                    'I-save ang Face ID'),
                                                 maxLines: 1,
-                                                style: TextStyle(
+                                                style: const TextStyle(
                                                     fontWeight:
                                                         FontWeight.w800)),
                                           ),

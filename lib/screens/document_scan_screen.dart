@@ -12,6 +12,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/theme.dart';
+import '../services/locale_controller.dart';
 
 /// Reconstructs recognized text in genuine top-to-bottom, left-to-right
 /// reading order using each line's actual position on the page, instead
@@ -36,8 +37,7 @@ String _readingOrderText(RecognizedText recognized) {
     for (final block in recognized.blocks) ...block.lines,
   ];
   if (lines.isEmpty) return recognized.text;
-  lines.sort(
-      (a, b) => a.boundingBox.top.compareTo(b.boundingBox.top));
+  lines.sort((a, b) => a.boundingBox.top.compareTo(b.boundingBox.top));
 
   final rows = <List<TextLine>>[];
   for (final line in lines) {
@@ -48,10 +48,9 @@ String _readingOrderText(RecognizedText recognized) {
               .map((l) => (l.boundingBox.top + l.boundingBox.bottom) / 2)
               .reduce((a, b) => a + b) /
           lastRow.length;
-      final rowHeight = lastRow
-              .map((l) => l.boundingBox.height)
-              .reduce((a, b) => a + b) /
-          lastRow.length;
+      final rowHeight =
+          lastRow.map((l) => l.boundingBox.height).reduce((a, b) => a + b) /
+              lastRow.length;
       if ((lineMid - rowMid).abs() < rowHeight * 0.6) {
         lastRow.add(line);
         continue;
@@ -86,10 +85,17 @@ class DocumentScanScreen extends StatefulWidget {
     super.key,
     required this.title,
     required this.instructions,
+    this.portrait = false,
   });
 
   final String title;
   final String instructions;
+
+  /// Shapes the guide frame (and so the cropped photo) taller-than-wide
+  /// instead of the default wider-than-tall — an OR/CR is a tall slip,
+  /// unlike the landscape card a driver's license is (see
+  /// VehicleAttachmentScreen._scanDocument, the only caller).
+  final bool portrait;
 
   @override
   State<DocumentScanScreen> createState() => _DocumentScanScreenState();
@@ -113,11 +119,21 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
   /// Same rect the on-screen guide border is drawn at in [build] — kept as
   /// one source of truth so the crop in [_cropToFrame] always grabs exactly
   /// what the guide visually promises, never more of the background (e.g.
-  /// the table the license is sitting on). Clamped to a fraction of the
-  /// screen width instead of a fixed 320 so it still fits on narrow phones.
+  /// the table the license is sitting on).
+  ///
+  /// Both orientations share one long-side length, derived from the same
+  /// fraction of the screen's shortest side, and the same 320:200 (1.6:1)
+  /// aspect ratio — just swapped for [portrait] — rather than two
+  /// independently tuned sizes. That's what keeps the OR/CR frame and the
+  /// license frame reading as a matched pair of capture targets instead of
+  /// two differently-scaled boxes, while still shrinking to fit a narrow
+  /// or short phone either way.
   Rect _frameRect(Size screen) {
-    final w = math.min(320.0, screen.width * 0.86);
-    final h = w * (200 / 320);
+    final shortestSide = math.min(screen.width, screen.height);
+    final long = math.min(360.0, shortestSide * 0.86);
+    final short = long * (200 / 320);
+    final w = widget.portrait ? short : long;
+    final h = widget.portrait ? long : short;
     return Rect.fromCenter(
         center: Offset(screen.width / 2, screen.height / 2),
         width: w,
@@ -168,7 +184,8 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
     if (kIsWeb) {
       setState(() {
         _initializing = false;
-        _error = 'Document scanning is only available on the Android app.';
+        _error = t('Document scanning is only available on the Android app.',
+            'Available lang ang pag-scan ng dokumento sa Android app.');
       });
       return;
     }
@@ -178,8 +195,10 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
       setState(() {
         _initializing = false;
         _error = status.isPermanentlyDenied
-            ? 'Camera blocked. Settings > Apps > PayPark > Permissions > Camera'
-            : 'Camera permission denied.';
+            ? t(
+                'Camera blocked. Settings > Apps > PayPark > Permissions > Camera',
+                'Naka-block ang camera. Settings > Apps > PayPark > Permissions > Camera')
+            : t('Camera permission denied.', 'Tinanggihan ang pahintulot sa camera.');
       });
       return;
     }
@@ -188,7 +207,7 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
       if (cams.isEmpty) {
         setState(() {
           _initializing = false;
-          _error = 'No camera found.';
+          _error = t('No camera found.', 'Walang nakitang camera.');
         });
         return;
       }
@@ -196,8 +215,8 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cams.first,
       );
-      _cam = CameraController(back, ResolutionPreset.veryHigh,
-          enableAudio: false);
+      _cam =
+          CameraController(back, ResolutionPreset.veryHigh, enableAudio: false);
       await _cam!.initialize();
       _tr = TextRecognizer(script: TextRecognitionScript.latin);
       if (mounted) setState(() => _initializing = false);
@@ -205,7 +224,7 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
       if (mounted) {
         setState(() {
           _initializing = false;
-          _error = 'Camera error: $e';
+          _error = t('Camera error: $e', 'Error sa camera: $e');
         });
       }
     }
@@ -231,7 +250,9 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
       if (!mounted) return;
       setState(() => _shotPath = cropped ?? shot.path);
     } catch (e) {
-      if (mounted) setState(() => _error = 'Capture failed: $e');
+      if (mounted) {
+        setState(() => _error = t('Capture failed: $e', 'Hindi nakuha: $e'));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -243,8 +264,7 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
     if (path == null || tr == null || _busy) return;
     setState(() => _busy = true);
     try {
-      final recognized =
-          await tr.processImage(InputImage.fromFilePath(path));
+      final recognized = await tr.processImage(InputImage.fromFilePath(path));
       final dir = await getApplicationDocumentsDirectory();
       final docsDir = Directory('${dir.path}/vehicle_docs');
       if (!await docsDir.exists()) await docsDir.create(recursive: true);
@@ -256,7 +276,10 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
             imagePath: savedPath, rawText: _readingOrderText(recognized)),
       );
     } catch (e) {
-      if (mounted) setState(() => _error = 'Couldn\'t process photo: $e');
+      if (mounted) {
+        setState(() =>
+            _error = t('Couldn\'t process photo: $e', 'Hindi ma-process ang litrato: $e'));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -279,20 +302,33 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
         fit: StackFit.expand,
         children: [
           if (hasShot)
-            Image.file(File(_shotPath!), fit: BoxFit.cover)
+            // contain, not cover — this is the already-cropped, document-
+            // shaped photo (see _cropToFrame), and its aspect ratio has no
+            // reason to match the phone screen's. cover would zoom to fill
+            // the screen and clip the edges of what was actually captured;
+            // contain shows the whole thing, letterboxed if need be.
+            Container(
+              color: Colors.black,
+              child: Image.file(File(_shotPath!), fit: BoxFit.contain),
+            )
           else if (ready)
+            // Deliberately still the plain stretched CameraPreview, not
+            // CoverCameraPreview — _cropToFrame below maps the on-screen
+            // guide frame to the captured image using direct
+            // screen-fraction coordinates, which only lines up because
+            // this preview stretches 1:1 to the screen with no aspect
+            // correction. Switching this to a "cover" crop would shift
+            // what that math actually grabs out of the saved photo.
             CameraPreview(_cam!)
           else if (_initializing)
-            const Center(
-                child: CircularProgressIndicator(color: YosColors.accent))
+            Center(child: CircularProgressIndicator(color: YosColors.accent))
           else
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(28),
-                child: Text(_error ?? 'Camera unavailable.',
+                child: Text(_error ?? t('Camera unavailable.', 'Hindi available ang camera.'),
                     textAlign: TextAlign.center,
-                    style:
-                        const TextStyle(color: YosColors.ink, fontSize: 15)),
+                    style: TextStyle(color: YosColors.ink, fontSize: 15)),
               ),
             ),
           if (ready && !hasShot)
@@ -329,8 +365,8 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
                   children: [
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded,
-                          color: Colors.white),
+                      icon:
+                          const Icon(Icons.close_rounded, color: Colors.white),
                     ),
                     Expanded(
                       child: Text(widget.title,
@@ -363,9 +399,11 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        hasShot ? 'Use this photo?' : widget.instructions,
+                        hasShot
+                            ? t('Use this photo?', 'Gamitin ang litratong ito?')
+                            : widget.instructions,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: YosColors.sub,
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
@@ -387,23 +425,43 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
                           child: FilledButton.icon(
                             onPressed: (!ready || _busy) ? null : _capture,
                             style: FilledButton.styleFrom(
-                              backgroundColor: YosColors.ink,
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 16),
+                              // YosColors.accentDeep/onAccent — the same
+                              // amber-in-light/yellow-in-dark pairing every
+                              // other primary capture CTA in the app uses
+                              // (Scan Face ID, Save Face ID/Retake), so this
+                              // button actually tracks the mode toggle
+                              // instead of staying a fixed near-black in
+                              // both.
+                              backgroundColor: YosColors.accentDeep,
+                              foregroundColor: YosColors.onAccent,
+                              disabledBackgroundColor:
+                                  YosColors.accentDeep.withValues(alpha: 0.5),
+                              disabledForegroundColor:
+                                  YosColors.onAccent.withValues(alpha: 0.75),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(999)),
                             ),
                             icon: _busy
-                                ? const SizedBox(
+                                ? SizedBox(
                                     width: 18,
                                     height: 18,
                                     child: CircularProgressIndicator(
-                                        strokeWidth: 2, color: Colors.white),
+                                        strokeWidth: 2,
+                                        color: YosColors.onAccent
+                                            .withValues(alpha: 0.75)),
                                   )
                                 : const Icon(Icons.camera_alt_rounded),
-                            label: Text(_busy ? 'Working...' : 'Capture',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w800)),
+                            label: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                  _busy
+                                      ? t('Working...', 'Ginagawa...')
+                                      : t('Capture', 'Kumuha'),
+                                  maxLines: 1,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800)),
+                            ),
                           ),
                         )
                       else
@@ -415,15 +473,14 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
                                     ? null
                                     : () => setState(() => _shotPath = null),
                                 style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 14),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
                                   shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(999)),
+                                      borderRadius: BorderRadius.circular(999)),
                                 ),
-                                child: const FittedBox(
+                                child: FittedBox(
                                   fit: BoxFit.scaleDown,
-                                  child: Text('Retake',
+                                  child: Text(t('Retake', 'Kunin Ulit'),
                                       maxLines: 1,
                                       style: TextStyle(
                                           color: YosColors.ink,
@@ -438,25 +495,25 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
                                 style: FilledButton.styleFrom(
                                   backgroundColor: YosColors.good,
                                   foregroundColor: YosColors.ink,
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 14),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
                                   shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(999)),
+                                      borderRadius: BorderRadius.circular(999)),
                                 ),
                                 child: _busy
-                                    ? const SizedBox(
+                                    ? SizedBox(
                                         width: 18,
                                         height: 18,
                                         child: CircularProgressIndicator(
                                             strokeWidth: 2,
                                             color: YosColors.ink),
                                       )
-                                    : const FittedBox(
+                                    : FittedBox(
                                         fit: BoxFit.scaleDown,
-                                        child: Text('Use this photo',
+                                        child: Text(
+                                            t('Use this photo', 'Gamitin ang Litratong Ito'),
                                             maxLines: 1,
-                                            style: TextStyle(
+                                            style: const TextStyle(
                                                 fontWeight: FontWeight.w800)),
                                       ),
                               ),

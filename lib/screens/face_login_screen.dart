@@ -13,6 +13,8 @@ import '../services/face_auth_service.dart';
 import '../services/face_embedding_service.dart';
 import '../services/face_geometry.dart';
 import '../services/firestore_service.dart';
+import '../services/locale_controller.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/scanner_frame.dart';
 import '../widgets/toast.dart';
 import 'password_login_screen.dart';
@@ -91,7 +93,8 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
     if (kIsWeb) {
       setState(() {
         _initializing = false;
-        _error = 'Face sign-in is only available on the Android app.';
+        _error = t('Face sign-in is only available on the Android app.',
+            'Available lang ang Face sign-in sa Android app.');
       });
       return;
     }
@@ -101,8 +104,10 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
       setState(() {
         _initializing = false;
         _error = status.isPermanentlyDenied
-            ? 'Camera blocked. Settings > Apps > PayPark > Permissions > Camera'
-            : 'Camera permission denied.';
+            ? t(
+                'Camera blocked. Settings > Apps > PayPark > Permissions > Camera',
+                'Naka-block ang camera. Settings > Apps > PayPark > Permissions > Camera')
+            : t('Camera permission denied.', 'Tinanggihan ang pahintulot sa camera.');
       });
       return;
     }
@@ -114,14 +119,14 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
     // time the app ever asks for the camera. One short settle-and-retry
     // clears it; a real failure (no camera, hardware busy, etc.) still
     // surfaces normally on the retry.
-    for (var attempt = 0; ; attempt++) {
+    for (var attempt = 0;; attempt++) {
       try {
         final cams = await availableCameras();
         if (cams.isEmpty) {
           if (mounted) {
             setState(() {
               _initializing = false;
-              _error = 'No camera found.';
+              _error = t('No camera found.', 'Walang nahanap na camera.');
             });
           }
           return;
@@ -160,7 +165,7 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
         if (mounted) {
           setState(() {
             _initializing = false;
-            _error = 'Camera error: $e';
+            _error = t('Camera error: $e', 'Error sa camera: $e');
           });
         }
         return;
@@ -186,8 +191,7 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
       final isCurrent = ModalRoute.of(context)?.isCurrent ?? true;
       if (isCurrent) await _scan();
       if (!mounted) return;
-      await Future.delayed(
-          Duration(milliseconds: isCurrent ? 900 : 400));
+      await Future.delayed(Duration(milliseconds: isCurrent ? 900 : 400));
     }
   }
 
@@ -205,25 +209,17 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
   /// already has, not a push toward creating a brand-new one.
   Future<void> _denyAndReturnToLogin() async {
     if (!mounted) return;
-    final usePassword = await showDialog<bool>(
-      context: context,
+    final usePassword = await showAppConfirmDialog(
+      context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Not recognized'),
-        content: const Text(
-            'We couldn\'t match your face this time. You can sign in with '
-            'your password instead.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Type password instead'),
-          ),
-        ],
-      ),
+      title: t('Not recognized', 'Hindi Nakilala'),
+      message: t(
+          'We couldn\'t match your face this time. You can sign in '
+          'with your password instead.',
+          'Hindi namin natugma ang iyong mukha ngayon. Puwede kang mag-sign '
+          'in gamit ang iyong password.'),
+      confirmLabel: t('Type password instead', 'I-type na lang ang password'),
+      confirmIcon: Icons.password_rounded,
     );
     if (!mounted) return;
     if (usePassword == true) {
@@ -259,9 +255,12 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
       // so the cloud fallback below (see _tryCloudMatch) has something to
       // compare it against.
 
-      String? issue = 'No face found. Center your face in the frame.';
+      String? issue = t('No face found. Center your face in the frame.',
+          'Walang nakitang mukha. I-center ang iyong mukha sa frame.');
       List<double>? vector;
-      for (var attempt = 1; attempt <= _maxAttempts && vector == null; attempt++) {
+      for (var attempt = 1;
+          attempt <= _maxAttempts && vector == null;
+          attempt++) {
         // A brief settle before every shot (not scaling with attempt
         // number) — just enough for the camera's auto-exposure/focus to
         // catch up, short enough that a good first frame still lands well
@@ -270,11 +269,13 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
         final shot = await cam.takePicture();
         final faces = await fd.processImage(InputImage.fromFilePath(shot.path));
         if (faces.isEmpty) {
-          issue = 'No face found. Center your face in the frame.';
+          issue = t('No face found. Center your face in the frame.',
+              'Walang nakitang mukha. I-center ang iyong mukha sa frame.');
           continue;
         }
         if (faces.length > 1) {
-          issue = 'More than one face in frame.';
+          issue = t('More than one face in frame.',
+              'Higit sa isang mukha ang nasa frame.');
           continue;
         }
         // strict: false — login only needs one reasonable frame to feed
@@ -289,7 +290,8 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
         final v = await FaceEmbeddingService.instance
             .extractEmbeddingFromFile(shot.path, faces.first);
         if (v == null) {
-          issue = 'Couldn\'t read your face clearly. Try again.';
+          issue = t('Couldn\'t read your face clearly. Try again.',
+              'Hindi maliwanag nabasa ang iyong mukha. Subukan ulit.');
           continue;
         }
         vector = v;
@@ -347,7 +349,8 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
         await YosRepository.instance.login(cloudMatch.profile.email, password);
       } on FirebaseAuthException {
         if (mounted) {
-          setState(() => _error = 'Incorrect password. Please try again.');
+          setState(() => _error = t('Incorrect password. Please try again.',
+              'Maling password. Subukan ulit.'));
         }
         return;
       }
@@ -368,8 +371,10 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
           uid: cloudMatch.profile.uid, name: cloudMatch.profile.name);
     } on FirebaseAuthException {
       if (mounted) {
-        setState(() => _error =
-            'Face matched, but the saved sign-in is out of date. Use your password instead.');
+        setState(() => _error = t(
+            'Face matched, but the saved sign-in is out of date. Use your password instead.',
+            'Nakilala ang mukha, pero luma na ang naka-save na sign-in. '
+            'Gamitin na lang ang password mo.'));
       }
     } catch (e) {
       // Never surface a raw exception (e.g. a transient Firestore
@@ -377,7 +382,8 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
       // to the user — log it for diagnostics, show a plain retry prompt.
       debugPrint('Face sign-in failed: $e');
       if (mounted) {
-        setState(() => _error = 'Something went wrong. Please try again.');
+        setState(() => _error = t('Something went wrong. Please try again.',
+            'May nangyaring mali. Subukan ulit.'));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -491,10 +497,12 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
         Toast.info(
             context,
             actuallyAdmin
-                ? 'Signed in as Admin (this account has admin access).'
-                : 'Signed in as Collector (this account isn\'t Admin).');
+                ? t('Signed in as Admin (this account has admin access).',
+                    'Naka-sign in bilang Admin (may admin access ang account na ito).')
+                : t('Signed in as Collector (this account isn\'t Admin).',
+                    'Naka-sign in bilang Kolektor (hindi Admin ang account na ito).'));
       } else {
-        Toast.success(context, 'Welcome back, $name');
+        Toast.success(context, t('Welcome back, $name', 'Maligayang pagbabalik, $name'));
       }
       // skipEnrollCheck: this scan already proved enrollment — there's no
       // local profile to have matched otherwise — so RootShell doesn't
@@ -527,7 +535,7 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
         fit: StackFit.expand,
         children: [
           if (ready)
-            CameraPreview(_cam!)
+            CoverCameraPreview(controller: _cam!)
           else if (_initializing)
             const Center(
                 child: CircularProgressIndicator(color: FaceIdColors.accent))
@@ -535,7 +543,8 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(28),
-                child: Text(_error ?? 'Camera unavailable.',
+                child: Text(
+                    _error ?? t('Camera unavailable.', 'Hindi available ang camera.'),
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Colors.white, fontSize: 15)),
               ),
@@ -598,8 +607,11 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
                               const SizedBox(height: 2),
                               Text(
                                   _matchedName != null
-                                      ? 'Welcome back, $_matchedName'
-                                      : 'Please look into the camera and hold still',
+                                      ? t('Welcome back, $_matchedName',
+                                          'Maligayang pagbabalik, $_matchedName')
+                                      : t(
+                                          'Please look into the camera and hold still',
+                                          'Tumingin sa camera at huwag gumalaw'),
                                   style: const TextStyle(
                                       color: Colors.white70,
                                       fontSize: 13,
@@ -629,18 +641,14 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
                       child: ScanProgressBar(
                         progress: _progress,
                         caption: _matchedName != null
-                            ? 'Matched'
-                            : (_busy ? 'Scanning.' : null),
+                            ? t('Matched', 'Nakilala')
+                            : (_busy ? t('Scanning.', 'Sina-scan.') : null),
                       ),
                     ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                    child: Container(
+                    child: Padding(
                       padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: FaceIdColors.navyMid,
-                        borderRadius: BorderRadius.circular(24),
-                      ),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -658,24 +666,47 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
                             child: FilledButton.icon(
                               onPressed: (!ready || _busy) ? null : _scan,
                               style: FilledButton.styleFrom(
-                                backgroundColor: FaceIdColors.accent,
-                                foregroundColor: FaceIdColors.navyDeep,
+                                // YosColors.accentDeep/onAccent — the same
+                                // amber pairing "Scan Face ID" (the
+                                // sign-in landing screen) and "Save Face
+                                // ID"/"Retake" (enrollment) all use now,
+                                // not this screen's own mint accent.
+                                backgroundColor: YosColors.accentDeep,
+                                foregroundColor: YosColors.onAccent,
+                                // Explicit disabled colors, not left unset:
+                                // FilledButton falls back to the app-wide
+                                // filledButtonTheme's disabledBackground/
+                                // ForegroundColor otherwise (see
+                                // core/theme.dart) — a flat, unrelated gray
+                                // — for the "Checking..." state this button
+                                // sits in while auto-scanning is busy
+                                // (onPressed: null above). A dimmed amber
+                                // instead keeps it reading as the same
+                                // button rather than a suddenly-disabled
+                                // stranger.
+                                disabledBackgroundColor:
+                                    YosColors.accentDeep.withValues(alpha: 0.5),
+                                disabledForegroundColor:
+                                    YosColors.onAccent.withValues(alpha: 0.75),
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 16),
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(999)),
                               ),
                               icon: _busy
-                                  ? const SizedBox(
+                                  ? SizedBox(
                                       width: 18,
                                       height: 18,
                                       child: CircularProgressIndicator(
                                           strokeWidth: 2,
-                                          color: FaceIdColors.navyDeep),
+                                          color: YosColors.onAccent
+                                              .withValues(alpha: 0.75)),
                                     )
                                   : const Icon(Icons.face_retouching_natural),
                               label: Text(
-                                  _busy ? 'Checking...' : 'Scan',
+                                  _busy
+                                      ? t('Checking...', 'Chine-check...')
+                                      : t('Scan', 'I-scan'),
                                   style: const TextStyle(
                                       fontWeight: FontWeight.w800)),
                             ),
@@ -689,13 +720,14 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
                           if (_error != null) ...[
                             const SizedBox(height: 10),
                             TextButton(
-                              onPressed: () =>
-                                  Navigator.of(context).push(MaterialPageRoute(
+                              onPressed: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
                                       builder: (_) =>
                                           const PasswordLoginScreen())),
                               style: TextButton.styleFrom(
                                   foregroundColor: FaceIdColors.accent),
-                              child: const Text('Type password instead'),
+                              child: Text(t('Type password instead',
+                                  'I-type na lang ang password')),
                             ),
                           ],
                         ],
@@ -744,47 +776,97 @@ class _PasswordPromptDialogState extends State<_PasswordPromptDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Welcome back, ${widget.name}'),
-      content: Column(
+    return Dialog(
+      backgroundColor: YosColors.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Recognized for the first time on this phone — enter your '
-            'password once to finish signing in. Face ID will be instant '
-            'on this phone from then on.',
-            style: TextStyle(color: YosColors.sub, fontSize: 13),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 8, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                      t('Welcome back, ${widget.name}',
+                          'Maligayang pagbabalik, ${widget.name}'),
+                      style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                          color: YosColors.ink)),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: Icon(Icons.close_rounded, color: YosColors.sub),
+                  tooltip: t('Cancel', 'Kanselahin'),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _password,
-            obscureText: _obscure,
-            autofocus: true,
-            onSubmitted: (v) => Navigator.of(context).pop(v),
-            decoration: InputDecoration(
-              labelText: 'Password',
-              prefixIcon: const Icon(Icons.lock_outline_rounded),
-              suffixIcon: IconButton(
-                icon: Icon(_obscure
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined),
-                onPressed: () => setState(() => _obscure = !_obscure),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  t(
+                      'Recognized for the first time on this phone — enter your '
+                      'password once to finish signing in. Face ID will be '
+                      'instant on this phone from then on.',
+                      'Unang beses kang nakilala sa telepono na ito — ilagay '
+                      'ang iyong password nang isang beses para matapos ang '
+                      'sign in. Instant na ang Face ID sa teleponong ito '
+                      'mula ngayon.'),
+                  style: TextStyle(
+                      color: YosColors.sub,
+                      fontSize: 13,
+                      height: 1.4,
+                      fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _password,
+                  obscureText: _obscure,
+                  autofocus: true,
+                  onSubmitted: (v) => Navigator.of(context).pop(v),
+                  decoration: InputDecoration(
+                    labelText: t('Password', 'Password'),
+                    prefixIcon: const Icon(Icons.lock_outline_rounded),
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscure
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined),
+                      onPressed: () => setState(() => _obscure = !_obscure),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Material(
+              color: YosColors.accent,
+              borderRadius: BorderRadius.circular(999),
+              child: InkWell(
+                onTap: () => Navigator.of(context).pop(_password.text),
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  alignment: Alignment.center,
+                  child: Text(t('Continue', 'Magpatuloy'),
+                      style: TextStyle(
+                          color: YosColors.onAccent,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15)),
+                ),
               ),
             ),
           ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_password.text),
-          child: const Text('Continue'),
-        ),
-      ],
     );
   }
 }

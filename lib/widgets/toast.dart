@@ -193,49 +193,57 @@ class _ToastPillState extends State<_ToastPill>
     ).animate(CurvedAnimation(parent: _c, curve: Curves.easeOutCubic));
     final fade = CurvedAnimation(parent: _c, curve: Curves.easeOut);
 
-    return SlideTransition(
-      position: slide,
-      child: FadeTransition(
-        opacity: fade,
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Material(
-            color: Colors.transparent,
-            child: GestureDetector(
-              onTap: _dismiss,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 12),
-                constraints: const BoxConstraints(maxWidth: 340),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: kSoftShadow,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 30,
-                      height: 30,
-                      decoration: BoxDecoration(
-                          color: p.bg, shape: BoxShape.circle),
-                      child: Icon(widget.item.icon, size: 18, color: p.fg),
-                    ),
-                    const SizedBox(width: 10),
-                    Flexible(
-                      child: Text(
-                        widget.item.message,
-                        style: TextStyle(
-                          color: p.fg,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+    // RepaintBoundary: this sits in the root Overlay, drawn on top of
+    // whatever screen is currently showing, and animates in/out on every
+    // single toast across the whole app — same "trace left behind"
+    // reasoning as PopIn's matching comment in glow_effects.dart, so its
+    // slide/fade repaints don't bleed into the screen content underneath.
+    return RepaintBoundary(
+      child: SlideTransition(
+        position: slide,
+        child: FadeTransition(
+          opacity: fade,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.transparent,
+              child: GestureDetector(
+                onTap: _dismiss,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                  constraints: const BoxConstraints(maxWidth: 340),
+                  decoration: BoxDecoration(
+                    color: YosColors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: kSoftShadow,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                            color: p.bg, shape: BoxShape.circle),
+                        child:
+                            Icon(widget.item.icon, size: 18, color: p.fg),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          widget.item.message,
+                          style: TextStyle(
+                            color: p.fg,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

@@ -1,0 +1,43 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Mirrors firestore.rules' own hasFaceId() gate — Storage rules can't
+    // share Dart/JS code with the Firestore ruleset, so this is
+    // re-expressed here via the firestore.get()/exists() bridge functions,
+    // reading the exact same collectors/{uid}.face_id_enrolled flag.
+    function hasFaceId() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/collectors/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/collectors/$(request.auth.uid)).data.face_id_enrolled == true;
+    }
+
+    // Vehicle document photos (driver's license, OR/CR) — see
+    // VehicleDocumentStorage. Same mandatory Face ID gate as every other
+    // dashboard resource in firestore.rules. Images only, capped well
+    // above what a phone camera capture actually produces so a
+    // compromised/buggy client can't dump arbitrary large files here.
+    match /vehicle_documents/{plateKey}/{fileName} {
+      allow read: if hasFaceId();
+      allow write: if hasFaceId()
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if hasFaceId();
+    }
+
+    // Collector profile photos — see CollectorPhotoStorage. Readable by
+    // any enrolled collector (same as vehicle documents above, ProfileScreen
+    // shows other collectors' photos nowhere today, but nothing here needs
+    // to stay private within the roster), writable only by the uid whose
+    // folder it is — self-service only, no admin override, mirroring
+    // collectors/{uid}'s own photo_url self-update rule in firestore.rules.
+    match /collector_photos/{uid}/{fileName} {
+      allow read: if hasFaceId();
+      allow write: if hasFaceId()
+        && request.auth.uid == uid
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if hasFaceId() && request.auth.uid == uid;
+    }
+  }
+}

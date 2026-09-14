@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import '../core/constants.dart';
 import '../core/theme.dart';
 import '../services/document_ocr.dart';
+import '../services/locale_controller.dart';
+import '../services/plate_matcher.dart';
+import '../widgets/doc_photo_view.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
 import '../widgets/toast.dart';
@@ -19,6 +22,8 @@ class VehicleAttachmentResult {
     required this.vehicleType,
     required this.licensePhotoPath,
     required this.orCrPhotoPath,
+    required this.licensePhotoUrl,
+    required this.orCrPhotoUrl,
   });
 
   final String driverName;
@@ -30,6 +35,13 @@ class VehicleAttachmentResult {
   final VehicleType? vehicleType;
   final String? licensePhotoPath;
   final String? orCrPhotoPath;
+
+  /// Whichever synced Storage URL each photo already had (see
+  /// RegisterVehicleScreen/VehicleRegistry.register) — null whenever the
+  /// matching path above was just (re)captured on this screen, since a
+  /// fresh local capture hasn't been uploaded yet.
+  final String? licensePhotoUrl;
+  final String? orCrPhotoUrl;
 }
 
 /// Dedicated "attach documents" step: capture the driver's license and
@@ -46,12 +58,16 @@ class VehicleAttachmentScreen extends StatefulWidget {
     this.initialPlateNumber = '',
     this.initialLicensePhotoPath,
     this.initialOrCrPhotoPath,
+    this.initialLicensePhotoUrl,
+    this.initialOrCrPhotoUrl,
   });
 
   final String initialDriverName;
   final String initialPlateNumber;
   final String? initialLicensePhotoPath;
   final String? initialOrCrPhotoPath;
+  final String? initialLicensePhotoUrl;
+  final String? initialOrCrPhotoUrl;
 
   @override
   State<VehicleAttachmentScreen> createState() =>
@@ -64,6 +80,8 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
   late final TextEditingController _plate;
   String? _licensePhotoPath;
   String? _orCrPhotoPath;
+  String? _licensePhotoUrl;
+  String? _orCrPhotoUrl;
   VehicleType? _detectedType;
 
   @override
@@ -73,6 +91,8 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
     _plate = TextEditingController(text: widget.initialPlateNumber);
     _licensePhotoPath = widget.initialLicensePhotoPath;
     _orCrPhotoPath = widget.initialOrCrPhotoPath;
+    _licensePhotoUrl = widget.initialLicensePhotoUrl;
+    _orCrPhotoUrl = widget.initialOrCrPhotoUrl;
   }
 
   @override
@@ -95,10 +115,15 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
     final result = await Navigator.of(context).push<DocumentScanResult>(
       MaterialPageRoute(
         builder: (_) => DocumentScanScreen(
-          title: isLicense ? "Scan driver's license" : 'Scan OR/CR',
+          title: isLicense
+              ? t("Scan driver's license", "I-scan ang Driver's License")
+              : t('Scan OR/CR', 'I-scan ang OR/CR'),
           instructions: isLicense
-              ? 'Align the license within the frame, then Capture'
-              : 'Align the OR/CR within the frame, then Capture',
+              ? t('Align the license within the frame, then Capture',
+                  'Ihanay ang license sa loob ng frame, tapos Capture')
+              : t('Align the OR/CR within the frame, then Capture',
+                  'Ihanay ang OR/CR sa loob ng frame, tapos Capture'),
+          portrait: !isLicense,
         ),
       ),
     );
@@ -126,16 +151,12 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
         _plate.text = parsed.plate!;
         read.add('Plate ${parsed.plate}');
       }
-      // Owner name is a fallback for driver name only — a driver's
-      // license read (if one's been scanned) is the more authoritative
-      // source for who's actually driving, vs. who owns the vehicle.
-      if (parsed.ownerName != null && _driver.text.trim().isEmpty) {
-        _driver.text = parsed.ownerName!;
-        read.add(parsed.ownerName!);
-      }
+      // Full name only ever comes from the driver's license scan, never
+      // from here — the OR/CR's registered owner isn't necessarily who's
+      // actually driving, so it's never a valid stand-in for that field.
       if (parsed.vehicleTypeLabel != null) {
-        final match = VehicleType.values
-            .where((t) => t.label == parsed.vehicleTypeLabel);
+        final match =
+            VehicleType.values.where((t) => t.label == parsed.vehicleTypeLabel);
         if (match.isNotEmpty) {
           _detectedType = match.first;
           read.add(_detectedType!.label);
@@ -147,23 +168,66 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
     setState(() {
       if (isLicense) {
         _licensePhotoPath = result.imagePath;
+        // A fresh capture replaces the image entirely — any URL already
+        // synced for the old photo no longer matches, so it's cleared
+        // rather than kept, which is what tells register() to actually
+        // upload this new one (see its own doc comment).
+        _licensePhotoUrl = null;
       } else {
         _orCrPhotoPath = result.imagePath;
+        _orCrPhotoUrl = null;
       }
     });
     Toast.info(
         context,
         read.isNotEmpty
-            ? 'Read: ${read.join(' · ')}'
-            : "Photo saved, but couldn't read the details — check "
-                '"View" or try rescanning with better lighting.');
+            ? t('Read: ${read.join(' · ')}', 'Nabasa: ${read.join(' · ')}')
+            : t(
+                "Photo saved, but couldn't read the details — check "
+                    '"View" or try rescanning with better lighting.',
+                'Na-save ang larawan, pero hindi mabasa ang mga detalye — '
+                    'tingnan ang "View" o subukang i-scan ulit sa mas '
+                    'maliwanag na lugar.'));
+  }
+
+  /// Camera+OCR shortcut for the plate field itself, separate from
+  /// [_scanDocument]'s OR/CR capture — that one only reads a plate when
+  /// it happens to appear somewhere on the OR/CR slip; this one photographs
+  /// the plate directly (landscape framing, like the license) and matches
+  /// the recognized text against [PlateMatcher]'s own PH-plate shapes, the
+  /// same matcher DocumentOcr.parseOrCr already trusts. The photo itself
+  /// isn't kept — there's no "plate photo" field on the vehicle, just the
+  /// plate number text — so it's deleted right after OCR runs over it.
+  Future<void> _scanPlate() async {
+    final result = await Navigator.of(context).push<DocumentScanResult>(
+      MaterialPageRoute(
+        builder: (_) => DocumentScanScreen(
+          title: t('Scan plate number', 'I-scan ang Plaka Numero'),
+          instructions: t('Align the plate within the frame, then Capture',
+              'Ihanay ang plaka sa loob ng frame, tapos Capture'),
+        ),
+      ),
+    );
+    if (result == null) return;
+    unawaited(File(result.imagePath).delete());
+    if (!mounted) return;
+    final plate = PlateMatcher.bestMatch(PlateMatcher.clean(result.rawText));
+    if (plate == null) {
+      Toast.warn(
+          context,
+          t("Couldn't read a plate number — try again or type it in.",
+              'Hindi mabasa ang plaka numero — subukan ulit o i-type na lang.'));
+      return;
+    }
+    setState(() => _plate.text = plate);
+    Toast.info(context, t('Plate read: $plate', 'Nabasang plaka: $plate'));
   }
 
   /// Full-screen, pinch-to-zoom view of a captured document photo — lets
   /// the collector double-check (or catch a bad auto-fill) against the
   /// real image instead of a reconstructed OCR text guess (see
   /// _scanDocument's doc comment).
-  void _viewPhoto(String path) {
+  void _viewPhoto(String? path, String? url) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => Scaffold(
         backgroundColor: Colors.black,
@@ -175,7 +239,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
           child: InteractiveViewer(
             minScale: 0.5,
             maxScale: 4,
-            child: Image.file(File(path)),
+            child: DocPhotoView(path: path, url: url, fit: BoxFit.contain),
           ),
         ),
       ),
@@ -190,6 +254,8 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
       vehicleType: _detectedType,
       licensePhotoPath: _licensePhotoPath,
       orCrPhotoPath: _orCrPhotoPath,
+      licensePhotoUrl: _licensePhotoUrl,
+      orCrPhotoUrl: _orCrPhotoUrl,
     ));
   }
 
@@ -198,8 +264,8 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const BackButton(),
-        title: const Text('Attachment',
-            style: TextStyle(fontWeight: FontWeight.w800)),
+        title: Text(t('Attachment', 'Attachment'),
+            style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: TouchGlowOverlay(
         child: SafeArea(
@@ -211,12 +277,14 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                 PopIn(
                   child: GlassCard(
                     child: _DocCaptureCard(
-                      label: "Driver's license",
+                      label: t("Driver's license", "Driver's License"),
                       photoPath: _licensePhotoPath,
+                      photoUrl: _licensePhotoUrl,
                       onScan: () => _scanDocument(isLicense: true),
-                      onViewPhoto: _licensePhotoPath == null
+                      onViewPhoto: (_licensePhotoPath ?? _licensePhotoUrl) ==
+                              null
                           ? null
-                          : () => _viewPhoto(_licensePhotoPath!),
+                          : () => _viewPhoto(_licensePhotoPath, _licensePhotoUrl),
                     ),
                   ),
                 ),
@@ -227,10 +295,11 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                     child: _DocCaptureCard(
                       label: 'OR/CR',
                       photoPath: _orCrPhotoPath,
+                      photoUrl: _orCrPhotoUrl,
                       onScan: () => _scanDocument(isLicense: false),
-                      onViewPhoto: _orCrPhotoPath == null
+                      onViewPhoto: (_orCrPhotoPath ?? _orCrPhotoUrl) == null
                           ? null
-                          : () => _viewPhoto(_orCrPhotoPath!),
+                          : () => _viewPhoto(_orCrPhotoPath, _orCrPhotoUrl),
                     ),
                   ),
                 ),
@@ -241,8 +310,12 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Please update the details below if '
-                            'there\'s any change.',
+                        Text(
+                            t(
+                                'Please update the details below if '
+                                    "there's any change.",
+                                'Paki-update ang mga detalye sa ibaba kung '
+                                    'may pagbabago.'),
                             style: TextStyle(
                                 color: YosColors.warn,
                                 fontSize: 12,
@@ -251,28 +324,37 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                         TextFormField(
                           controller: _driver,
                           textCapitalization: TextCapitalization.words,
-                          decoration: const InputDecoration(
-                            labelText: 'Full name',
-                            hintText:
+                          decoration: InputDecoration(
+                            labelText: t('Full name', 'Buong Pangalan'),
+                            hintText: t(
                                 'Filled from license scan — edit if needed',
-                            prefixIcon: Icon(Icons.badge_outlined),
+                                'Napunan mula sa license scan — i-edit kung kailangan'),
+                            prefixIcon: const Icon(Icons.badge_outlined),
                           ),
                           validator: (v) => (v == null || v.trim().length < 2)
-                              ? 'Scan the driver\'s license or type the name'
+                              ? t("Scan the driver's license or type the name",
+                                  "I-scan ang driver's license o i-type ang pangalan")
                               : null,
                         ),
                         const SizedBox(height: 14),
                         TextFormField(
                           controller: _plate,
                           textCapitalization: TextCapitalization.characters,
-                          decoration: const InputDecoration(
-                            labelText: 'Plate number',
-                            hintText:
-                                'Filled from OR/CR scan — edit if needed',
-                            prefixIcon: Icon(Icons.pin_outlined),
+                          decoration: InputDecoration(
+                            labelText: t('Plate number', 'Plaka Numero'),
+                            hintText: t('Scan the plate, OR/CR, or type it in',
+                                'I-scan ang plaka, OR/CR, o i-type ito'),
+                            prefixIcon: const Icon(Icons.pin_outlined),
+                            suffixIcon: IconButton(
+                              tooltip: t('Scan plate number', 'I-scan ang Plaka Numero'),
+                              icon: const Icon(Icons.camera_alt_outlined),
+                              onPressed: _scanPlate,
+                            ),
                           ),
                           validator: (v) => (v == null || v.trim().length < 5)
-                              ? 'Scan the OR/CR or type the plate number'
+                              ? t(
+                                  'Scan the plate/OR-CR or type the plate number',
+                                  'I-scan ang plaka/OR-CR o i-type ang plaka numero')
                               : null,
                         ),
                       ],
@@ -281,7 +363,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                 ),
                 const SizedBox(height: 22),
                 BreathingGlowButton(
-                  label: 'Confirm',
+                  label: t('Confirm', 'Kumpirmahin'),
                   icon: Icons.check_rounded,
                   onPressed: _confirm,
                 ),
@@ -300,35 +382,39 @@ class _DocCaptureCard extends StatelessWidget {
   const _DocCaptureCard({
     required this.label,
     required this.photoPath,
+    required this.photoUrl,
     required this.onScan,
     this.onViewPhoto,
   });
 
   final String label;
   final String? photoPath;
+  final String? photoUrl;
   final VoidCallback onScan;
   final VoidCallback? onViewPhoto;
 
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = photoPath != null;
+    final hasPhoto = photoPath != null || photoUrl != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style:
-                const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+            style: TextStyle(
+                color: YosColors.ink,
+                fontWeight: FontWeight.w800,
+                fontSize: 15)),
         const SizedBox(height: 10),
         ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: AspectRatio(
             aspectRatio: 1.7,
             child: hasPhoto
-                ? Image.file(File(photoPath!), fit: BoxFit.cover)
+                ? DocPhotoView(path: photoPath, url: photoUrl)
                 : Container(
                     color: YosColors.surfaceHigh,
                     alignment: Alignment.center,
-                    child: const Icon(Icons.badge_outlined,
+                    child: Icon(Icons.badge_outlined,
                         color: YosColors.sub, size: 32),
                   ),
           ),
@@ -340,7 +426,14 @@ class _DocCaptureCard extends StatelessWidget {
               child: OutlinedButton.icon(
                 onPressed: onViewPhoto,
                 icon: const Icon(Icons.visibility_outlined, size: 18),
-                label: const Text('View'),
+                // FittedBox: a longer translated label ("Tingnan"/"Kunin
+                // Ulit") had nothing stopping it from overflowing this
+                // narrow, icon-sharing button — see BreathingGlowButton's
+                // matching fix for the same underlying issue.
+                label: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(t('View', 'Tingnan'), maxLines: 1),
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -348,7 +441,14 @@ class _DocCaptureCard extends StatelessWidget {
               child: FilledButton.icon(
                 onPressed: onScan,
                 icon: const Icon(Icons.camera_alt_outlined, size: 18),
-                label: Text(hasPhoto ? 'Retake' : 'Capture'),
+                label: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                      hasPhoto
+                          ? t('Retake', 'Kunin Ulit')
+                          : t('Capture', 'Kumuha'),
+                      maxLines: 1),
+                ),
               ),
             ),
           ],

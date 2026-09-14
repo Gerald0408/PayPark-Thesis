@@ -12,7 +12,7 @@ String authErrorMessage(String code) => switch (code) {
       'user-not-found' ||
       'wrong-password' ||
       'invalid-credential' =>
-        'Incorrect username or password.',
+        'Incorrect password.',
       'weak-password' => 'Password must be at least 8 characters.',
       'too-many-requests' => 'Too many attempts. Try again later.',
       'quota-exceeded' => 'Service busy. Try again shortly.',

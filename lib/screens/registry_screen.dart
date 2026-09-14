@@ -5,11 +5,14 @@ import 'package:intl/intl.dart';
 import '../core/constants.dart';
 import '../core/theme.dart';
 import '../models/registered_vehicle.dart';
+import '../services/locale_controller.dart';
 import '../services/points_settings_service.dart';
 import '../services/registry_service.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/toast.dart';
 import '../widgets/glow_effects.dart';
+import '../widgets/zone_chip_grid.dart';
 import 'vehicle_attachment_screen.dart';
 import 'vehicle_detail_screen.dart';
 
@@ -80,17 +83,17 @@ class _RegistryScreenState extends State<RegistryScreen> {
       appBar: AppBar(
         automaticallyImplyLeading: !widget.embedded,
         leading: widget.embedded ? null : const BackButton(),
-        title: const Text('Registered vehicles',
-            style: TextStyle(fontWeight: FontWeight.w800)),
+        title: Text(t('Registered Vehicles', 'Mga Nakarehistrong Sasakyan'),
+            style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => const RegisterVehicleScreen())),
+        onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const RegisterVehicleScreen())),
         backgroundColor: YosColors.accent,
-        foregroundColor: const Color(0xFF0A0A0B),
+        foregroundColor: YosColors.onAccent,
         icon: const Icon(Icons.add_rounded),
-        label: const Text('Register',
-            style: TextStyle(fontWeight: FontWeight.w800)),
+        label: Text(t('Register', 'Magrehistro'),
+            style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: TouchGlowOverlay(
         child: SafeArea(
@@ -111,11 +114,12 @@ class _RegistryScreenState extends State<RegistryScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.directions_car_filled_outlined,
+                        Icon(Icons.directions_car_filled_outlined,
                             size: 72, color: YosColors.sub),
                         const SizedBox(height: 16),
-                        const Text(
-                          'No vehicles registered yet.',
+                        Text(
+                          t('No vehicles registered yet.',
+                              'Wala pang nakarehistrong sasakyan.'),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                               color: YosColors.sub,
@@ -123,11 +127,12 @@ class _RegistryScreenState extends State<RegistryScreen> {
                               fontSize: 15),
                         ),
                         const SizedBox(height: 6),
-                        const Text(
-                          'Register a vehicle to make entries a one-tap flow.',
+                        Text(
+                          t(
+                              'Register a vehicle to make entries a one-tap flow.',
+                              'Magrehistro ng sasakyan para maging one-tap ang pag-entry.'),
                           textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: YosColors.sub, fontSize: 13),
+                          style: TextStyle(color: YosColors.sub, fontSize: 13),
                         ),
                       ],
                     ),
@@ -136,8 +141,7 @@ class _RegistryScreenState extends State<RegistryScreen> {
               }
 
               final list = _apply(all);
-              final totalEntries =
-                  all.fold<int>(0, (s, v) => s + v.entryCount);
+              final totalEntries = all.fold<int>(0, (s, v) => s + v.entryCount);
               final weekAgo = DateTime.now().subtract(const Duration(days: 7));
               final newThisWeek =
                   all.where((v) => v.registeredAt.isAfter(weekAgo)).length;
@@ -156,15 +160,14 @@ class _RegistryScreenState extends State<RegistryScreen> {
                                 controller: _search,
                                 textInputAction: TextInputAction.search,
                                 decoration: InputDecoration(
-                                  hintText: 'Search vehicle or driver',
-                                  prefixIcon:
-                                      const Icon(Icons.search_rounded),
+                                  hintText: t('Search vehicle or driver',
+                                      'Maghanap ng sasakyan o driver'),
+                                  prefixIcon: const Icon(Icons.search_rounded),
                                   suffixIcon: _search.text.isEmpty
                                       ? null
                                       : IconButton(
-                                          icon:
-                                              const Icon(Icons.close_rounded),
-                                          tooltip: 'Clear search',
+                                          icon: const Icon(Icons.close_rounded),
+                                          tooltip: t('Clear search', 'I-clear ang search'),
                                           onPressed: () => _search.clear(),
                                         ),
                                 ),
@@ -191,14 +194,13 @@ class _RegistryScreenState extends State<RegistryScreen> {
                   Expanded(
                     child: list.isEmpty
                         ? Center(
-                            child: Text('No matches.',
-                                style: const TextStyle(
+                            child: Text(t('No matches.', 'Walang nahanap.'),
+                                style: TextStyle(
                                     color: YosColors.sub,
                                     fontSize: 15,
                                     fontWeight: FontWeight.w600)))
                         : ListView.builder(
-                            padding:
-                                const EdgeInsets.fromLTRB(20, 4, 20, 100),
+                            padding: const EdgeInsets.fromLTRB(20, 4, 20, 100),
                             itemCount: list.length,
                             itemBuilder: (_, i) => Padding(
                               padding: const EdgeInsets.only(bottom: 12),
@@ -228,16 +230,16 @@ class _SortButton extends StatelessWidget {
   final _SortMode value;
   final ValueChanged<_SortMode> onChanged;
 
-  static const _labels = {
-    _SortMode.entriesDesc: 'Most entries',
-    _SortMode.nameAsc: 'Driver name',
-    _SortMode.newest: 'Newest first',
-  };
+  static Map<_SortMode, String> get _labels => {
+        _SortMode.entriesDesc: t('Most entries', 'Pinakamaraming Entry'),
+        _SortMode.nameAsc: t('Driver name', 'Pangalan ng Driver'),
+        _SortMode.newest: t('Newest first', 'Pinakabago'),
+      };
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Sort vehicles: ${_labels[value]}',
+      label: '${t('Sort vehicles', 'Isort ang mga sasakyan')}: ${_labels[value]}',
       button: true,
       child: ExcludeSemantics(
         child: PopupMenuButton<_SortMode>(
@@ -259,13 +261,13 @@ class _SortButton extends StatelessWidget {
                     SizedBox(
                       width: 22,
                       child: entry.key == value
-                          ? const Icon(Icons.check_rounded,
+                          ? Icon(Icons.check_rounded,
                               size: 18, color: YosColors.accent)
                           : null,
                     ),
                     const SizedBox(width: 6),
                     Text(entry.value,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
                             color: YosColors.ink)),
@@ -282,8 +284,7 @@ class _SortButton extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: YosColors.glassBorder),
             ),
-            child: const Icon(Icons.sort_rounded,
-                color: YosColors.ink, size: 20),
+            child: Icon(Icons.sort_rounded, color: YosColors.ink, size: 20),
           ),
         ),
       ),
@@ -306,10 +307,10 @@ class _StatStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final stats = [
-      ('$total', 'Total vehicles'),
-      ('$entries', 'Total entries'),
-      ('$frequent', 'Frequent'),
-      ('$newThisWeek', 'New this week'),
+      ('$total', t('Total vehicles', 'Kabuuang Sasakyan')),
+      ('$entries', t('Total entries', 'Kabuuang Entry')),
+      ('$frequent', t('Frequent', 'Madalas')),
+      ('$newThisWeek', t('New this week', 'Bago Ngayong Linggo')),
     ];
     // Deliberately no card here: this is a plain summary strip, not a
     // content row, and boxing it made it compete visually with the list
@@ -330,14 +331,16 @@ class _StatStrip extends StatelessWidget {
                 child: Column(
                   children: [
                     Text(stats[i].$1,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w800, fontSize: 20)),
+                        style: TextStyle(
+                            color: YosColors.ink,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 20)),
                     const SizedBox(height: 3),
                     Text(stats[i].$2,
                         textAlign: TextAlign.center,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: YosColors.sub,
                             fontSize: 13,
                             fontWeight: FontWeight.w600)),
@@ -374,10 +377,16 @@ class _RegCard extends StatelessWidget {
 
   static String _agoLabel(DateTime dt) {
     final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 1) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays < 30) return '${diff.inDays}d ago';
+    if (diff.inMinutes < 1) return t('just now', 'ngayon lang');
+    if (diff.inMinutes < 60) {
+      return t('${diff.inMinutes}m ago', '${diff.inMinutes}m ang nakaraan');
+    }
+    if (diff.inHours < 24) {
+      return t('${diff.inHours}h ago', '${diff.inHours}h ang nakaraan');
+    }
+    if (diff.inDays < 30) {
+      return t('${diff.inDays}d ago', '${diff.inDays}d ang nakaraan');
+    }
     return DateFormat('MMM d').format(dt);
   }
 
@@ -434,14 +443,15 @@ class _RegCard extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(vehicle.plateNumber,
-                                  style: const TextStyle(
+                                  style: TextStyle(
+                                      color: YosColors.ink,
                                       fontWeight: FontWeight.w800,
                                       fontSize: 15,
                                       letterSpacing: 1.0)),
                               Text('${vt.label} · ${zone.name}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       color: YosColors.sub,
                                       fontSize: 13,
                                       fontWeight: FontWeight.w600)),
@@ -456,7 +466,7 @@ class _RegCard extends StatelessWidget {
                                     color: tier,
                                     fontWeight: FontWeight.w800,
                                     fontSize: 18)),
-                            const Text('entries',
+                            Text(t('entries', 'entry'),
                                 style: TextStyle(
                                     color: YosColors.sub,
                                     fontSize: 13,
@@ -465,11 +475,11 @@ class _RegCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 4),
                         Semantics(
-                          label: 'Edit ${vehicle.plateNumber}',
+                          label: '${t('Edit', 'I-edit')} ${vehicle.plateNumber}',
                           button: true,
                           child: ExcludeSemantics(
                             child: IconButton(
-                              tooltip: 'Edit',
+                              tooltip: t('Edit', 'I-edit'),
                               visualDensity: VisualDensity.compact,
                               onPressed: () {
                                 HapticFeedback.selectionClick();
@@ -477,7 +487,7 @@ class _RegCard extends StatelessWidget {
                                     builder: (_) => RegisterVehicleScreen(
                                         existing: vehicle)));
                               },
-                              icon: const Icon(Icons.edit_outlined,
+                              icon: Icon(Icons.edit_outlined,
                                   color: YosColors.sub, size: 18),
                             ),
                           ),
@@ -495,7 +505,7 @@ class _RegCard extends StatelessWidget {
                             backgroundColor: YosColors.surfaceHigh,
                             child: MediaQuery.withNoTextScaling(
                               child: Text(_initials(vehicle.driverName),
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       fontSize: 10,
                                       fontWeight: FontWeight.w800,
                                       color: YosColors.ink)),
@@ -507,13 +517,13 @@ class _RegCard extends StatelessWidget {
                           child: Text(vehicle.driverName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
                                   color: YosColors.ink)),
                         ),
                         Text(ago,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: YosColors.sub,
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500)),
@@ -544,8 +554,7 @@ class _RegistrySkeleton extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Expanded(
-                child: SkeletonBox(height: 56, borderRadius: 12)),
+            const Expanded(child: SkeletonBox(height: 56, borderRadius: 12)),
             const SizedBox(width: 10),
             SkeletonBox(width: 44, height: 44, borderRadius: 12),
           ],
@@ -574,11 +583,10 @@ class _ErrorState extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.cloud_off_rounded,
-                size: 56, color: YosColors.sub),
+            Icon(Icons.cloud_off_rounded, size: 56, color: YosColors.sub),
             const SizedBox(height: 16),
-            const Text(
-              "Couldn't load the registry.",
+            Text(
+              t("Couldn't load the registry.", 'Hindi ma-load ang registry.'),
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: YosColors.ink,
@@ -586,9 +594,12 @@ class _ErrorState extends StatelessWidget {
                   fontSize: 17),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Check your connection — this list updates automatically '
-              'once you\'re back online.',
+            Text(
+              t(
+                  'Check your connection — this list updates automatically '
+                      'once you\'re back online.',
+                  'Suriin ang iyong koneksyon — awtomatikong mag-a-update '
+                      'ang listahang ito once online ka na ulit.'),
               textAlign: TextAlign.center,
               style: TextStyle(color: YosColors.sub, fontSize: 15),
             ),
@@ -606,8 +617,7 @@ class RegisterVehicleScreen extends StatefulWidget {
   final String? initialPlate; // used when the scanner found a new plate
 
   @override
-  State<RegisterVehicleScreen> createState() =>
-      _RegisterVehicleScreenState();
+  State<RegisterVehicleScreen> createState() => _RegisterVehicleScreenState();
 }
 
 class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
@@ -621,6 +631,8 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
   bool _busy = false;
   String? _licensePhotoPath;
   String? _orCrPhotoPath;
+  String? _licensePhotoUrl;
+  String? _orCrPhotoUrl;
 
   @override
   void initState() {
@@ -630,12 +642,13 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
     _plate = TextEditingController(
         text: e?.plateNumber ?? widget.initialPlate ?? '');
     _rfid = TextEditingController(text: e?.rfidTag ?? '');
-    _type = e == null
-        ? VehicleType.tricycle
-        : VehicleType.fromLabel(e.vehicleType);
+    _type =
+        e == null ? VehicleType.tricycle : VehicleType.fromLabel(e.vehicleType);
     _zone = e?.defaultZoneId ?? kZones.first.id;
     _licensePhotoPath = e?.driverLicensePhotoPath;
     _orCrPhotoPath = e?.orCrPhotoPath;
+    _licensePhotoUrl = e?.driverLicensePhotoUrl;
+    _orCrPhotoUrl = e?.orCrPhotoUrl;
   }
 
   /// Opens [VehicleAttachmentScreen] to capture (or retake) the driver's
@@ -653,6 +666,8 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
           initialPlateNumber: _plate.text,
           initialLicensePhotoPath: _licensePhotoPath,
           initialOrCrPhotoPath: _orCrPhotoPath,
+          initialLicensePhotoUrl: _licensePhotoUrl,
+          initialOrCrPhotoUrl: _orCrPhotoUrl,
         ),
       ),
     );
@@ -662,6 +677,8 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
       _plate.text = result.plateNumber;
       _licensePhotoPath = result.licensePhotoPath;
       _orCrPhotoPath = result.orCrPhotoPath;
+      _licensePhotoUrl = result.licensePhotoUrl;
+      _orCrPhotoUrl = result.orCrPhotoUrl;
       if (result.vehicleType != null) _type = result.vehicleType!;
     });
   }
@@ -691,11 +708,13 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
         RegisteredVehicle.normalize(match.plateNumber) ==
             RegisteredVehicle.normalize(_plate.text);
     if (match != null && !samePlate) {
-      Toast.error(context,
-          'Tag $tag is already enrolled to ${match.plateNumber}.');
+      Toast.error(
+          context,
+          t('Tag $tag is already enrolled to ${match.plateNumber}.',
+              'Naka-enroll na ang tag na $tag sa ${match.plateNumber}.'));
       return;
     }
-    Toast.success(context, 'Card scanned: $tag');
+    Toast.success(context, t('Card scanned: $tag', 'Na-scan ang card: $tag'));
   }
 
   Future<void> _save() async {
@@ -705,12 +724,16 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
     // validate() above can't catch them missing. Same gate as before that
     // screen existed.
     if (_driver.text.trim().length < 2) {
-      Toast.error(context, 'Open Attachment and scan or type a name first.');
+      Toast.error(context,
+          t('Open Attachment and scan or type a name first.',
+              'Buksan ang Attachment at i-scan o i-type muna ang pangalan.'));
       return;
     }
     if (_plate.text.trim().length < 5) {
       Toast.error(
-          context, 'Open Attachment and scan or type a plate number first.');
+          context,
+          t('Open Attachment and scan or type a plate number first.',
+              'Buksan ang Attachment at i-scan o i-type muna ang plaka numero.'));
       return;
     }
     setState(() => _busy = true);
@@ -722,12 +745,17 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
         defaultZoneId: _zone,
         driverLicensePhotoPath: _licensePhotoPath,
         orCrPhotoPath: _orCrPhotoPath,
+        driverLicensePhotoUrl: _licensePhotoUrl,
+        orCrPhotoUrl: _orCrPhotoUrl,
         rfidTag: _rfid.text,
       );
       HapticFeedback.mediumImpact();
       if (mounted) {
-        Toast.success(context,
-            widget.existing == null ? 'Vehicle registered' : 'Changes saved');
+        Toast.success(
+            context,
+            widget.existing == null
+                ? t('Vehicle registered', 'Narehistro ang sasakyan')
+                : t('Changes saved', 'Na-save ang mga pagbabago'));
         Navigator.of(context).pop(true);
       }
     } finally {
@@ -736,27 +764,23 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
   }
 
   Future<void> _delete() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Delete registration?'),
-        content: Text(
-            'Remove ${widget.existing!.plateNumber} from the registry? Entry history is kept.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete',
-                  style: TextStyle(color: YosColors.bad))),
-        ],
-      ),
+    final ok = await showAppConfirmDialog(
+      context,
+      title: t('Delete registration?', 'Burahin ang rehistrasyon?'),
+      message: t(
+          'Remove ${widget.existing!.plateNumber} from the registry? Entry history is kept.',
+          'Alisin ang ${widget.existing!.plateNumber} sa registry? Mananatili ang '
+              'history ng mga entry.'),
+      confirmLabel: t('Delete', 'Burahin'),
+      confirmIcon: Icons.delete_outline_rounded,
+      confirmColor: YosColors.bad,
     );
     if (ok != true) return;
     await VehicleRegistry.instance.delete(widget.existing!.plateNumber);
     if (mounted) {
-      Toast.info(context, '${widget.existing!.plateNumber} removed');
+      Toast.info(context,
+          t('${widget.existing!.plateNumber} removed',
+              'Naalis ang ${widget.existing!.plateNumber}'));
       Navigator.of(context).pop(true);
     }
   }
@@ -767,7 +791,10 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const BackButton(),
-        title: Text(editing ? 'Edit vehicle' : 'Register vehicle',
+        title: Text(
+            editing
+                ? t('Edit vehicle', 'I-edit ang Sasakyan')
+                : t('Register vehicle', 'Magrehistro ng Sasakyan'),
             style: const TextStyle(fontWeight: FontWeight.w800)),
         actions: [
           if (editing)
@@ -799,9 +826,11 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Vehicle type',
+                        Text(t('Vehicle type', 'Uri ng Sasakyan'),
                             style: TextStyle(
-                                fontWeight: FontWeight.w800, fontSize: 16)),
+                                color: YosColors.ink,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16)),
                         const SizedBox(height: 12),
                         GridView.count(
                           shrinkWrap: true,
@@ -811,17 +840,14 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                           crossAxisSpacing: 10,
                           childAspectRatio: 2.2,
                           children: [
-                            for (var i = 0;
-                                i < VehicleType.values.length;
-                                i++)
+                            for (var i = 0; i < VehicleType.values.length; i++)
                               _TypeChip(
                                 type: VehicleType.values[i],
                                 color: pastelAt(i),
                                 selected: VehicleType.values[i] == _type,
                                 onTap: () {
                                   HapticFeedback.selectionClick();
-                                  setState(
-                                      () => _type = VehicleType.values[i]);
+                                  setState(() => _type = VehicleType.values[i]);
                                 },
                               ),
                           ],
@@ -837,23 +863,15 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Default zone',
+                        Text(t('Default zone', 'Default na Zone'),
                             style: TextStyle(
-                                fontWeight: FontWeight.w800, fontSize: 16)),
+                                color: YosColors.ink,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16)),
                         const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            for (final z in kZones)
-                              ChoiceChip(
-                                label: Text(z.name),
-                                selected: z.id == _zone,
-                                selectedColor: YosColors.sage,
-                                onSelected: (_) =>
-                                    setState(() => _zone = z.id),
-                              ),
-                          ],
+                        ZoneChipGrid(
+                          selectedZoneId: _zone,
+                          onChanged: (id) => setState(() => _zone = id),
                         ),
                       ],
                     ),
@@ -866,17 +884,25 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('RFID points',
+                        Text(t('RFID Points', 'RFID Points'),
                             style: TextStyle(
-                                fontWeight: FontWeight.w800, fontSize: 16)),
+                                color: YosColors.ink,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16)),
                         const SizedBox(height: 2),
-                        const Text(
-                            'Optional — enroll this vehicle to earn points '
-                            'on every parking fee, redeemable later. Tap the '
-                            'scan icon, then tap a card on the USB reader — '
-                            'or type the ID by hand.',
-                            style: TextStyle(
-                                color: YosColors.sub, fontSize: 12)),
+                        Text(
+                            t(
+                                'Optional — enroll this vehicle to earn points '
+                                    'on every parking fee, redeemable later. Tap the '
+                                    'scan icon, then tap a card on the USB reader — '
+                                    'or type the ID by hand.',
+                                'Opsyonal — i-enroll ang sasakyang ito para makakuha '
+                                    'ng points sa bawat bayad sa parking, na maaaring '
+                                    'i-redeem sa susunod. Pindutin ang scan icon, tapos '
+                                    'i-tap ang card sa USB reader — o i-type nang '
+                                    'manu-mano ang ID.'),
+                            style:
+                                TextStyle(color: YosColors.sub, fontSize: 12)),
                         const SizedBox(height: 14),
                         TextFormField(
                           controller: _rfid,
@@ -885,12 +911,13 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                           textInputAction: TextInputAction.done,
                           onFieldSubmitted: _onRfidScanned,
                           decoration: InputDecoration(
-                            labelText: 'RFID tag ID',
-                            hintText: 'e.g. printed on the card',
+                            labelText: t('RFID tag ID', 'RFID Tag ID'),
+                            hintText: t('e.g. printed on the card',
+                                'hal. nakalimbag sa card'),
                             prefixIcon: const Icon(Icons.nfc_rounded),
                             suffixIcon: IconButton(
                               icon: const Icon(Icons.contactless_rounded),
-                              tooltip: 'Scan a card',
+                              tooltip: t('Scan a card', 'Mag-scan ng card'),
                               onPressed: () {
                                 _rfid.clear();
                                 _rfidFocus.requestFocus();
@@ -901,8 +928,10 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                         if (editing && widget.existing!.rfidTag != null) ...[
                           const SizedBox(height: 10),
                           Text(
-                              '${formatPoints(widget.existing!.points)} points balance',
-                              style: const TextStyle(
+                              t(
+                                  '${formatPoints(widget.existing!.points)} points balance',
+                                  '${formatPoints(widget.existing!.points)} balanse ng points'),
+                              style: TextStyle(
                                   color: YosColors.accentDeep,
                                   fontWeight: FontWeight.w800,
                                   fontSize: 13)),
@@ -913,11 +942,12 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                 ),
                 const SizedBox(height: 24),
                 _busy
-                    ? const Center(
-                        child:
-                            CircularProgressIndicator(color: YosColors.ink))
+                    ? Center(
+                        child: CircularProgressIndicator(color: YosColors.ink))
                     : BreathingGlowButton(
-                        label: editing ? 'Save changes' : 'Register vehicle',
+                        label: editing
+                            ? t('Save changes', 'I-save ang mga Pagbabago')
+                            : t('Register vehicle', 'Magrehistro ng Sasakyan'),
                         icon: Icons.check_rounded,
                         onPressed: _save,
                       ),
@@ -925,9 +955,10 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                   const SizedBox(height: 10),
                   Center(
                     child: Text(
-                      '${widget.existing!.entryCount} total entries · registered ${DateFormat('MMM d, y').format(widget.existing!.registeredAt)}',
-                      style: const TextStyle(
-                          color: YosColors.sub, fontSize: 12),
+                      t(
+                          '${widget.existing!.entryCount} total entries · registered ${DateFormat('MMM d, y').format(widget.existing!.registeredAt)}',
+                          '${widget.existing!.entryCount} kabuuang entry · narehistro noong ${DateFormat('MMM d, y').format(widget.existing!.registeredAt)}'),
+                      style: TextStyle(color: YosColors.sub, fontSize: 12),
                     ),
                   ),
                 ],
@@ -985,23 +1016,26 @@ class _AttachmentButton extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Attachment',
+                Text(t('Attachment', 'Attachment'),
                     style: TextStyle(
-                        fontWeight: FontWeight.w800, fontSize: 16)),
+                        color: YosColors.ink,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16)),
                 Text(
                     complete
                         ? '$driverName · $plateNumber'
-                        : "Scan driver's license and OR/CR",
+                        : t("Scan driver's license and OR/CR",
+                            "I-scan ang driver's license at OR/CR"),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: YosColors.sub,
                         fontSize: 13,
                         fontWeight: FontWeight.w600)),
               ],
             ),
           ),
-          const Icon(Icons.chevron_right_rounded, color: YosColors.sub),
+          Icon(Icons.chevron_right_rounded, color: YosColors.sub),
         ],
       ),
     );
@@ -1028,10 +1062,10 @@ class _TypeChip extends StatelessWidget {
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutBack,
         decoration: BoxDecoration(
-          color: selected ? color : Colors.white,
+          color: selected ? color : YosColors.surface,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: selected ? YosColors.ink : const Color(0x14000000),
+            color: selected ? YosColors.inkLight : YosColors.glassBorder,
             width: selected ? 2 : 1,
           ),
         ),
@@ -1043,8 +1077,10 @@ class _TypeChip extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(type.label,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w800, fontSize: 13)),
+                    style: TextStyle(
+                        color: YosColors.ink,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13)),
               ),
             ],
           ),

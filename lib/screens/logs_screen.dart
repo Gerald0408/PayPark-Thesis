@@ -1,12 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../core/constants.dart';
 import '../core/theme.dart';
 import '../models/transaction.dart';
 import '../services/firestore_service.dart';
+import '../services/locale_controller.dart';
+import '../services/printer_service.dart';
 import '../widgets/glow_effects.dart';
+import '../widgets/toast.dart';
 
 class LogsScreen extends StatefulWidget {
   const LogsScreen({super.key, this.embedded = false});
@@ -25,8 +30,8 @@ class _LogsScreenState extends State<LogsScreen> {
       appBar: AppBar(
         automaticallyImplyLeading: !widget.embedded,
         leading: widget.embedded ? null : const BackButton(),
-        title: const Text('Transaction logs',
-            style: TextStyle(fontWeight: FontWeight.w800)),
+        title: Text(t('Transaction Logs', 'Mga Transaksyon'),
+            style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: const TouchGlowOverlay(
         child: SafeArea(child: TransactionLogView()),
@@ -111,20 +116,21 @@ class _TransactionLogViewState extends State<TransactionLogView> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
           child: Column(
             children: [
               TextField(
                 controller: _search,
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
-                  hintText: 'Plate, receipt ID, or driver…',
+                  hintText: t('Plate, receipt ID, or driver…',
+                      'Plaka, receipt ID, o driver…'),
                   prefixIcon: const Icon(Icons.search_rounded),
                   suffixIcon: _search.text.isEmpty
                       ? null
                       : IconButton(
                           icon: const Icon(Icons.close_rounded),
-                          tooltip: 'Clear search',
+                          tooltip: t('Clear search', 'I-clear ang paghahanap'),
                           onPressed: () => _search.clear(),
                         ),
                 ),
@@ -139,9 +145,9 @@ class _TransactionLogViewState extends State<TransactionLogView> {
                 runSpacing: 8,
                 children: [
                   for (final (f, label) in [
-                    (_TimeFilter.all, 'All'),
-                    (_TimeFilter.today, 'Today'),
-                    (_TimeFilter.hour, 'Last hour'),
+                    (_TimeFilter.all, t('All', 'Lahat')),
+                    (_TimeFilter.today, t('Today', 'Ngayon')),
+                    (_TimeFilter.hour, t('Last hour', 'Huling Oras')),
                   ])
                     ChoiceChip(
                       label: Text(label),
@@ -172,15 +178,18 @@ class _TransactionLogViewState extends State<TransactionLogView> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.inbox_rounded,
+                        Icon(Icons.inbox_rounded,
                             size: 56, color: YosColors.sub),
                         const SizedBox(height: 12),
                         Text(
                           _search.text.isEmpty
-                              ? 'No entries yet.\nLog a vehicle to start.'
-                              : 'No matches.\nTry a different plate or ID.',
+                              ? t('No entries yet.\nLog a vehicle to start.',
+                                  'Wala pang entries.\nMag-log ng sasakyan para magsimula.')
+                              : t(
+                                  'No matches.\nTry a different plate or ID.',
+                                  'Walang tugma.\nSubukan ang ibang plaka o ID.'),
                           textAlign: TextAlign.center,
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: YosColors.sub,
                               fontSize: 15,
                               fontWeight: FontWeight.w600),
@@ -218,100 +227,357 @@ class _TxCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final date = DateFormat('MMM d, hh:mm a').format(tx.timestamp);
     final (statusLabel, statusColor) = tx.pendingSync
-        ? ('SYNCING', YosColors.warn)
-        : ('PAID', YosColors.good);
+        ? (t('SYNCING', 'NAG-SYNC'), YosColors.warn)
+        : (t('PAID', 'BAYAD'), YosColors.good);
 
-    // A read-only row — no InkWell/haptic here, unlike _RegCard: there's
-    // no detail screen to navigate to, and giving it tap feedback it
-    // doesn't act on would be a false affordance.
     return MergeSemantics(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: YosColors.surface,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: YosColors.glassBorder),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                // Row number in the currently visible (filtered/searched)
-                // list — a plain running count, not a stable ID, so it
-                // shifts as the search/time filter narrows the list.
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: YosColors.sub.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text('${index + 1}',
-                      style: const TextStyle(
-                          color: YosColors.sub,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 12)),
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text('#${tx.trackingId}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 15,
-                          letterSpacing: 0.4)),
-                ),
-                const Spacer(),
-                if (tx.printed)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 8),
-                    child: ExcludeSemantics(
-                      child: Icon(Icons.print_rounded,
-                          size: 14, color: YosColors.sub),
-                    ),
-                  ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.16),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(statusLabel,
-                      style: TextStyle(
-                          color: statusColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.6)),
-                ),
-              ],
+          onTap: () => showDialog<void>(
+            context: context,
+            builder: (_) => _TxDetailDialog(tx: tx),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: YosColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: YosColors.glassBorder),
             ),
-            const SizedBox(height: 6),
-            Text('${tx.plateNumber} · ${tx.driverName}',
-                style: const TextStyle(
-                    color: YosColors.sub,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 10),
-            Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(date,
-                    style: const TextStyle(
+                Row(
+                  children: [
+                    // Row number in the currently visible (filtered/searched)
+                    // list — a plain running count, not a stable ID, so it
+                    // shifts as the search/time filter narrows the list.
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: YosColors.sub.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text('${index + 1}',
+                          style: TextStyle(
+                              color: YosColors.sub,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12)),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text('#${tx.trackingId}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: YosColors.ink,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                              letterSpacing: 0.4)),
+                    ),
+                    const Spacer(),
+                    if (tx.printed)
+                      Padding(
+                        padding: EdgeInsets.only(right: 8),
+                        child: ExcludeSemantics(
+                          child: Icon(Icons.print_rounded,
+                              size: 14, color: YosColors.sub),
+                        ),
+                      ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.16),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(statusLabel,
+                          style: TextStyle(
+                              color: statusColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.6)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text('${tx.plateNumber} · ${tx.driverName}',
+                    style: TextStyle(
                         color: YosColors.sub,
                         fontSize: 13,
-                        fontWeight: FontWeight.w500)),
-                const Spacer(),
-                Text('₱${tx.fee.toStringAsFixed(0)}',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w800, fontSize: 16)),
+                        fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Text(date,
+                        style: TextStyle(
+                            color: YosColors.sub,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500)),
+                    const Spacer(),
+                    Text('₱${tx.fee.toStringAsFixed(0)}',
+                        style: TextStyle(
+                            color: YosColors.ink,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16)),
+                  ],
+                ),
               ],
             ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+/// Full transaction detail, opened by tapping a [_TxCard] — every field the
+/// list row itself doesn't have room for (vehicle type, zone, exact
+/// timestamp), plus a one-tap reprint. Close (✕) sits in the header instead
+/// of a bottom "Close" button, since the bottom slot is reserved for the
+/// one real action here — reprinting — so it can span the dialog's full
+/// width edge-to-edge instead of sharing the row with a secondary button.
+class _TxDetailDialog extends StatefulWidget {
+  const _TxDetailDialog({required this.tx});
+  final ParkingTransaction tx;
+
+  @override
+  State<_TxDetailDialog> createState() => _TxDetailDialogState();
+}
+
+class _TxDetailDialogState extends State<_TxDetailDialog> {
+  bool _printing = false;
+
+  Future<void> _print() async {
+    final printer = PrinterService.instance;
+    if (!printer.isConnected) {
+      Toast.warn(context, t('Connect a printer first', 'Kumonekta muna sa printer'));
+      return;
+    }
+    setState(() => _printing = true);
+    try {
+      final tx = widget.tx;
+      await printer.printParkingTicket(
+        trackingId: tx.trackingId,
+        driverName: tx.driverName,
+        plateNumber: tx.plateNumber,
+        vehicleType: tx.vehicleType,
+        zoneId: tx.zoneId,
+        fee: tx.fee,
+        timestamp: tx.timestamp,
+        header: kReceiptHeader,
+        footer: kOrdinanceRef,
+      );
+      HapticFeedback.heavyImpact();
+      if (mounted) Toast.success(context, t('Receipt printed', 'Na-print ang resibo'));
+    } catch (e) {
+      if (mounted) Toast.error(context, t('Print failed', 'Hindi na-print'));
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tx = widget.tx;
+    final date = DateFormat('MMM d, y · hh:mm a').format(tx.timestamp);
+    final (statusLabel, statusColor) = tx.pendingSync
+        ? (t('Syncing', 'Nag-sync'), YosColors.warn)
+        : (t('Paid', 'Bayad'), YosColors.good);
+    const radius = 24.0;
+
+    return Dialog(
+      backgroundColor: YosColors.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 8, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(t('Transaction Details', 'Detalye ng Transaksyon'),
+                      style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                          color: YosColors.ink)),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: Icon(Icons.close_rounded, color: YosColors.sub),
+                  tooltip: t('Close', 'Isara'),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              children: [
+                _DetailRow(
+                    icon: Icons.receipt_long_rounded,
+                    label: t('Receipt ID', 'Receipt ID'),
+                    value: '#${tx.trackingId}'),
+                _DetailRow(
+                    icon: Icons.person_rounded,
+                    label: t('Driver', 'Driver'),
+                    value: tx.driverName),
+                _DetailRow(
+                    icon: Icons.directions_car_rounded,
+                    label: t('Plate · Vehicle', 'Plaka · Sasakyan'),
+                    value: '${tx.plateNumber} · ${tx.vehicleType}'),
+                _DetailRow(
+                    icon: Icons.place_rounded,
+                    label: t('Zone', 'Zone'),
+                    value: tx.zoneId),
+                _DetailRow(
+                    icon: Icons.schedule_rounded,
+                    label: t('Date & Time', 'Petsa at Oras'),
+                    value: date),
+                _DetailRow(
+                    icon: Icons.payments_rounded,
+                    label: t('Fee Collected', 'Naningil na Bayad'),
+                    value: tx.discount > 0
+                        ? '₱${tx.fee.toStringAsFixed(0)} (was '
+                            '₱${(tx.fee + tx.discount).toStringAsFixed(0)})'
+                        : '₱${tx.fee.toStringAsFixed(0)}'),
+                // Only shown once a redemption actually happened — most
+                // transactions have nothing here, so there's no "Discount:
+                // ₱0" clutter on the common case.
+                if (tx.discount > 0)
+                  _DetailRow(
+                      icon: Icons.redeem_rounded,
+                      label: t('Discount', 'Diskwento'),
+                      value: t(
+                          '-₱${tx.discount.toStringAsFixed(0)} (points redeemed)',
+                          '-₱${tx.discount.toStringAsFixed(0)} (na-redeem na points)'),
+                      valueColor: YosColors.good),
+                _DetailRow(
+                  icon: tx.pendingSync
+                      ? Icons.sync_rounded
+                      : Icons.check_circle_rounded,
+                  label: t('Status', 'Katayuan'),
+                  value: tx.printed
+                      ? '$statusLabel · ${t('Printed', 'Na-print')}'
+                      : statusLabel,
+                  valueColor: statusColor,
+                  isLast: true,
+                ),
+              ],
+            ),
+          ),
+          // A standalone rounded (pill) button with its own margin, not
+          // flush with the dialog's edges — matching the shape every other
+          // button in this app uses, rather than merging into the dialog
+          // chrome itself.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Material(
+              color: YosColors.accent,
+              borderRadius: BorderRadius.circular(999),
+              child: InkWell(
+                onTap: _printing ? null : _print,
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  alignment: Alignment.center,
+                  child: _printing
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: YosColors.onAccent),
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.print_rounded,
+                                size: 18, color: YosColors.onAccent),
+                            const SizedBox(width: 8),
+                            Text(
+                                tx.printed
+                                    ? t('Reprint Receipt', 'I-reprint ang Resibo')
+                                    : t('Print Receipt', 'I-print ang Resibo'),
+                                style: TextStyle(
+                                    color: YosColors.onAccent,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 15)),
+                          ],
+                        ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One icon-badge + label/value row inside [_TxDetailDialog].
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.valueColor,
+    this.isLast = false,
+  });
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color? valueColor;
+  final bool isLast;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+                color: YosColors.accentSoft,
+                borderRadius: BorderRadius.circular(10)),
+            alignment: Alignment.center,
+            child: Icon(icon, size: 18, color: YosColors.accentDeep),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                        color: YosColors.ink)),
+                const SizedBox(height: 2),
+                Text(value,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: valueColor ?? YosColors.sub,
+                        fontWeight: valueColor != null
+                            ? FontWeight.w700
+                            : FontWeight.w500)),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -349,11 +615,11 @@ class _ErrorState extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.cloud_off_rounded,
-                size: 56, color: YosColors.sub),
+            Icon(Icons.cloud_off_rounded, size: 56, color: YosColors.sub),
             const SizedBox(height: 16),
-            const Text(
-              "Couldn't load transaction logs.",
+            Text(
+              t("Couldn't load transaction logs.",
+                  'Hindi na-load ang mga transaksyon.'),
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: YosColors.ink,
@@ -361,9 +627,12 @@ class _ErrorState extends StatelessWidget {
                   fontSize: 17),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Check your connection — this list updates automatically '
-              'once you\'re back online.',
+            Text(
+              t(
+                  'Check your connection — this list updates automatically '
+                      'once you\'re back online.',
+                  'Tingnan ang iyong koneksyon — awtomatikong mag-u-update '
+                      'ang listahang ito kapag online ka na ulit.'),
               textAlign: TextAlign.center,
               style: TextStyle(color: YosColors.sub, fontSize: 15),
             ),

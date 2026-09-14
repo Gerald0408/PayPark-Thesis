@@ -36,20 +36,22 @@ class _TouchGlowOverlayState extends State<TouchGlowOverlay>
       onPointerDown: (e) => _bloom(e.localPosition),
       child: Stack(
         children: [
-          widget.child,
+          RepaintBoundary(child: widget.child),
           IgnorePointer(
-            child: AnimatedBuilder(
-              animation: _c,
-              builder: (_, __) {
-                if (_pos == null || _c.isDismissed || _c.isCompleted) {
-                  return const SizedBox.shrink();
-                }
-                final t = Curves.easeOut.transform(_c.value);
-                return CustomPaint(
-                  size: Size.infinite,
-                  painter: _BlobPainter(_pos!, t),
-                );
-              },
+            child: RepaintBoundary(
+              child: AnimatedBuilder(
+                animation: _c,
+                builder: (_, __) {
+                  if (_pos == null || _c.isDismissed || _c.isCompleted) {
+                    return const SizedBox.shrink();
+                  }
+                  final t = Curves.easeOut.transform(_c.value);
+                  return CustomPaint(
+                    size: Size.infinite,
+                    painter: _BlobPainter(_pos!, t),
+                  );
+                },
+              ),
             ),
           ),
         ],
@@ -65,8 +67,7 @@ class _BlobPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = YosColors.sage.withOpacity(0.35 * (1 - t));
+    final paint = Paint()..color = YosColors.sage.withOpacity(0.35 * (1 - t));
     canvas.drawCircle(pos, 30 + 60 * t, paint);
   }
 
@@ -74,23 +75,30 @@ class _BlobPainter extends CustomPainter {
   bool shouldRepaint(_BlobPainter old) => old.t != t || old.pos != pos;
 }
 
-/// Chunky deep-teal pill button. Fires a shine sweep across the surface
-/// on tap — silent when idle, glossy confirmation on press.
+/// Chunky accent pill button. Fires a shine sweep across the surface on
+/// tap — silent when idle, glossy confirmation on press.
 class BreathingGlowButton extends StatefulWidget {
   const BreathingGlowButton({
     super.key,
     required this.label,
     required this.onPressed,
     this.icon,
-    this.color = YosColors.accentDeep,
-    this.foreground = Colors.white,
+    this.color,
+    this.foreground,
   });
 
   final String label;
   final VoidCallback onPressed;
   final IconData? icon;
-  final Color color;
-  final Color foreground;
+  // Neither is a default parameter value: both YosColors.accentDeep and
+  // YosColors.onAccent are brightness-aware (light/dark palettes), so
+  // neither can be a compile-time constant default — resolved in
+  // build() instead. onAccent specifically flips near-black/white
+  // depending on whether this button's own background (accentDeep) is
+  // currently light (needs dark text) or dark (needs white) — see its
+  // own doc comment.
+  final Color? color;
+  final Color? foreground;
 
   @override
   State<BreathingGlowButton> createState() => _BreathingGlowButtonState();
@@ -114,6 +122,8 @@ class _BreathingGlowButtonState extends State<BreathingGlowButton>
 
   @override
   Widget build(BuildContext context) {
+    final color = widget.color ?? YosColors.accentDeep;
+    final foreground = widget.foreground ?? YosColors.onAccent;
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
       onTapCancel: () => setState(() => _pressed = false),
@@ -122,85 +132,102 @@ class _BreathingGlowButtonState extends State<BreathingGlowButton>
         _fireShine();
         widget.onPressed();
       },
-      child: AnimatedScale(
-        scale: _pressed ? 0.94 : 1.0,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOutBack,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: Container(
-            height: 62,
-            decoration: BoxDecoration(
-              color: widget.color,
-              borderRadius: BorderRadius.circular(999),
-              boxShadow: kSoftShadow,
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // Label + icon
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    if (widget.icon != null) ...[
-                      Icon(widget.icon, color: widget.foreground, size: 22),
-                      const SizedBox(width: 10),
-                    ],
-                    Text(
-                      widget.label,
-                      style: TextStyle(
-                        color: widget.foreground,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                        letterSpacing: 0.2,
+      child: RepaintBoundary(
+        child: AnimatedScale(
+          scale: _pressed ? 0.94 : 1.0,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOutBack,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: Container(
+              height: 62,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(999),
+                boxShadow: kSoftShadow,
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Label + icon — padded and shrink-to-fit rather than a
+                  // bare centered Row: a longer translated label (Filipino
+                  // routinely runs longer than the English it replaces —
+                  // see the `t()` call sites throughout the app) had
+                  // nothing stopping it from overflowing this button's
+                  // fixed height in a RenderFlex overflow, icon and all.
+                  // FittedBox scales the whole icon+label group down
+                  // together as one unit so it always fits, rather than
+                  // truncating the label with an ellipsis.
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.icon != null) ...[
+                            Icon(widget.icon, color: foreground, size: 22),
+                            const SizedBox(width: 10),
+                          ],
+                          Text(
+                            widget.label,
+                            maxLines: 1,
+                            style: TextStyle(
+                              color: foreground,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-                // Shine sweep overlay — a diagonal light streak that
-                // slides from left-off-screen to right-off-screen on tap.
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: AnimatedBuilder(
-                      animation: _shine,
-                      builder: (context, _) {
-                        if (_shine.isDismissed) {
-                          return const SizedBox.shrink();
-                        }
-                        final t = Curves.easeOut.transform(_shine.value);
-                        return LayoutBuilder(
-                          builder: (context, c) {
-                            final w = c.maxWidth;
-                            // Slide the streak from -w to +w.
-                            final dx = -w + (2 * w) * t;
-                            return Transform.translate(
-                              offset: Offset(dx, 0),
-                              child: Transform.rotate(
-                                angle: -0.35, // slight diagonal
-                                child: Container(
-                                  width: 60,
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.centerLeft,
-                                      end: Alignment.centerRight,
-                                      colors: [
-                                        widget.foreground.withOpacity(0.0),
-                                        widget.foreground.withOpacity(0.55),
-                                        widget.foreground.withOpacity(0.0),
-                                      ],
-                                      stops: const [0.0, 0.5, 1.0],
+                  ),
+                  // Shine sweep overlay — a diagonal light streak that
+                  // slides from left-off-screen to right-off-screen on tap.
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: AnimatedBuilder(
+                        animation: _shine,
+                        builder: (context, _) {
+                          if (_shine.isDismissed) {
+                            return const SizedBox.shrink();
+                          }
+                          final t = Curves.easeOut.transform(_shine.value);
+                          return LayoutBuilder(
+                            builder: (context, c) {
+                              final w = c.maxWidth;
+                              // Slide the streak from -w to +w.
+                              final dx = -w + (2 * w) * t;
+                              return Transform.translate(
+                                offset: Offset(dx, 0),
+                                child: Transform.rotate(
+                                  angle: -0.35, // slight diagonal
+                                  child: Container(
+                                    width: 60,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.centerLeft,
+                                        end: Alignment.centerRight,
+                                        colors: [
+                                          foreground.withOpacity(0.0),
+                                          foreground.withOpacity(0.55),
+                                          foreground.withOpacity(0.0),
+                                        ],
+                                        stops: const [0.0, 0.5, 1.0],
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            );
-                          },
-                        );
-                      },
+                              );
+                            },
+                          );
+                        },
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -209,7 +236,12 @@ class _BreathingGlowButtonState extends State<BreathingGlowButton>
   }
 }
 
-/// Sync status chip — friendly pill instead of neon badge.
+/// Sync status chip — friendly pill instead of neon badge. Solid fill (or
+/// warm red while offline), not a translucent overlay — this only ever
+/// sits on the dashboard's accent hero, which now paints the same pale
+/// blue gradient in both modes, so the "online" fill is a fixed white with
+/// fixed dark text regardless of mode, same as the hero's other white-
+/// circle buttons.
 class SyncBadge extends StatelessWidget {
   const SyncBadge({super.key, required this.online, this.pendingCount = 0});
   final bool online;
@@ -217,7 +249,8 @@ class SyncBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color bgc = online ? YosColors.mint : YosColors.pistachio;
+    final Color bgc = online ? Colors.white : YosColors.bad;
+    final Color fgc = online ? YosColors.onAccentSoft : Colors.white;
     final label = online
         ? (pendingCount > 0 ? 'Syncing $pendingCount' : 'All synced')
         : 'Offline${pendingCount > 0 ? ' · $pendingCount saved' : ''}';
@@ -232,13 +265,11 @@ class SyncBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(online ? Icons.cloud_done_rounded : Icons.cloud_off_rounded,
-              size: 15, color: YosColors.ink),
+              size: 15, color: fgc),
           const SizedBox(width: 6),
           Text(label,
-              style: const TextStyle(
-                  color: YosColors.ink,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800)),
+              style: TextStyle(
+                  color: fgc, fontSize: 12, fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -283,19 +314,29 @@ class _PopInState extends State<PopIn> with SingleTickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final curved = CurvedAnimation(parent: _c, curve: Curves.easeOutBack);
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (_, child) => Opacity(
-        opacity: _c.value.clamp(0, 1),
-        child: Transform.translate(
-          offset: Offset(0, 24 * (1 - curved.value)),
-          child: Transform.scale(
-            scale: 0.92 + 0.08 * curved.value,
-            child: child,
+    // RepaintBoundary around the animated Opacity/Transform stack: without
+    // it, this composites into whatever layer its parent already has, so
+    // every tick of the slide/scale/fade repaints and recomposites the
+    // surrounding static content along with it — the "trace" left behind
+    // when a card is still popping in while the rest of the screen (or a
+    // different screen entirely, on the desktop Windows GPU backend)
+    // settles. Isolating it into its own layer keeps this animation's
+    // repaints from bleeding into anything else on screen.
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (_, child) => Opacity(
+          opacity: _c.value.clamp(0, 1),
+          child: Transform.translate(
+            offset: Offset(0, 24 * (1 - curved.value)),
+            child: Transform.scale(
+              scale: 0.92 + 0.08 * curved.value,
+              child: child,
+            ),
           ),
         ),
+        child: widget.child,
       ),
-      child: widget.child,
     );
   }
 }
@@ -341,20 +382,26 @@ class _SkeletonBoxState extends State<SkeletonBox>
 
   @override
   Widget build(BuildContext context) {
-    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (_, __) {
-        final opacity = reduceMotion ? 0.6 : 0.35 + 0.35 * _c.value;
-        return Container(
-          width: widget.width,
-          height: widget.height,
-          decoration: BoxDecoration(
-            color: YosColors.surfaceHigh.withOpacity(opacity),
-            borderRadius: BorderRadius.circular(widget.borderRadius),
-          ),
-        );
-      },
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    // RepaintBoundary: pulses continuously (often several at once, stacked
+    // in a loading list) for as long as this is on screen — same "trace
+    // left behind" reasoning as PopIn's matching comment above.
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (_, __) {
+          final opacity = reduceMotion ? 0.6 : 0.35 + 0.35 * _c.value;
+          return Container(
+            width: widget.width,
+            height: widget.height,
+            decoration: BoxDecoration(
+              color: YosColors.surfaceHigh.withOpacity(opacity),
+              borderRadius: BorderRadius.circular(widget.borderRadius),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -366,7 +413,7 @@ class ProgressRing extends StatelessWidget {
     required this.value,
     this.size = 76,
     this.stroke = 9,
-    this.color = YosColors.ink,
+    this.color,
     this.track = Colors.white,
     this.child,
   });
@@ -374,43 +421,47 @@ class ProgressRing extends StatelessWidget {
   final double value; // 0..1
   final double size;
   final double stroke;
-  final Color color;
+  final Color? color;
   final Color track;
   final Widget? child;
 
   @override
   Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: value.clamp(0.0, 1.0)),
-      duration: const Duration(milliseconds: 900),
-      curve: Curves.easeOutCubic,
-      builder: (_, v, __) => SizedBox(
-        width: size,
-        height: size,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: size,
-              height: size,
-              child: CircularProgressIndicator(
-                value: 1,
-                strokeWidth: stroke,
-                valueColor: AlwaysStoppedAnimation(track),
+    // RepaintBoundary: animates every tick for its 900ms fill — same
+    // "trace left behind" reasoning as PopIn's matching comment above.
+    return RepaintBoundary(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: value.clamp(0.0, 1.0)),
+        duration: const Duration(milliseconds: 900),
+        curve: Curves.easeOutCubic,
+        builder: (_, v, __) => SizedBox(
+          width: size,
+          height: size,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox(
+                width: size,
+                height: size,
+                child: CircularProgressIndicator(
+                  value: 1,
+                  strokeWidth: stroke,
+                  valueColor: AlwaysStoppedAnimation(track),
+                ),
               ),
-            ),
-            SizedBox(
-              width: size,
-              height: size,
-              child: CircularProgressIndicator(
-                value: v,
-                strokeWidth: stroke,
-                strokeCap: StrokeCap.round,
-                valueColor: AlwaysStoppedAnimation(color),
+              SizedBox(
+                width: size,
+                height: size,
+                child: CircularProgressIndicator(
+                  value: v,
+                  strokeWidth: stroke,
+                  strokeCap: StrokeCap.round,
+                  valueColor: AlwaysStoppedAnimation(color ?? YosColors.ink),
+                ),
               ),
-            ),
-            if (child != null) child!,
-          ],
+              if (child != null) child!,
+            ],
+          ),
         ),
       ),
     );

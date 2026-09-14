@@ -1,4 +1,4 @@
-﻿import 'dart:ui' show FontFeature;
+import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,12 +9,16 @@ import '../models/registered_vehicle.dart';
 import '../models/transaction.dart';
 import '../services/fee_settings_service.dart';
 import '../services/firestore_service.dart';
+import '../services/locale_controller.dart';
 import '../services/points_settings_service.dart';
 import '../services/printer_service.dart';
 import '../services/registry_service.dart';
+import '../widgets/app_dialog.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/toast.dart';
 import '../widgets/glow_effects.dart';
+import '../widgets/vehicle_type_override_dialog.dart';
+import '../widgets/zone_chip_grid.dart';
 
 class PlateFormatter extends TextInputFormatter {
   @override
@@ -87,7 +91,8 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
     _rfid.clear();
     if (tag.isEmpty) return;
     if (_receiptBusy) {
-      Toast.warn(context, 'Finish the current receipt first.');
+      Toast.warn(context,
+          t('Finish the current receipt first.', 'Tapusin muna ang kasalukuyang resibo.'));
       return;
     }
     _receiptBusy = true;
@@ -99,7 +104,14 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
         _rfidFocus.requestFocus();
         return;
       }
-      final type = VehicleType.fromLabel(match.vehicleType);
+      final registeredType = VehicleType.fromLabel(match.vehicleType);
+      final type =
+          await confirmVehicleTypeOverride(context, current: registeredType);
+      if (!mounted) return;
+      if (type == null) {
+        _rfidFocus.requestFocus();
+        return;
+      }
       final tx = YosRepository.instance.buildTransaction(
         driverName: match.driverName,
         plateNumber: match.plateNumber,
@@ -137,6 +149,30 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
     _showReceiptDrawer(tx, registered: registered);
   }
 
+  /// Opens a searchable picker of registered vehicles for one-tap autofill
+  /// — reached by tapping the plate field while it's empty, for a
+  /// collector who'd rather pick a vehicle they've already registered
+  /// than retype its plate/driver every visit. Only fires while the field
+  /// is empty (see the field's own onTap) so it doesn't keep popping back
+  /// up while they're editing what they just typed; closing it without
+  /// picking anything leaves manual typing as the fallback, same as
+  /// before this existed.
+  Future<void> _pickRegisteredVehicle() async {
+    final picked = await showModalBottomSheet<RegisteredVehicle>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _RegisteredVehiclePicker(),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _driver.text = picked.driverName;
+      _plate.text = picked.plateNumber;
+      _type = VehicleType.fromLabel(picked.vehicleType);
+      _zoneId = picked.defaultZoneId;
+    });
+  }
+
   Future<void> _showReceiptDrawer(ParkingTransaction tx,
       {RegisteredVehicle? registered}) {
     return showModalBottomSheet(
@@ -161,8 +197,8 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const BackButton(),
-        title: const Text('New vehicle',
-            style: TextStyle(fontWeight: FontWeight.w800)),
+        title: Text(t('New vehicle', 'Bagong Sasakyan'),
+            style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: TouchGlowOverlay(
         child: SafeArea(
@@ -183,21 +219,29 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
                             height: 52,
                             decoration: const BoxDecoration(
                                 color: Colors.white, shape: BoxShape.circle),
+                            // Fixed, matching the always-white circle — not
+                            // the dynamic YosColors.ink, which goes
+                            // near-white (and vanishes) in dark mode.
                             child: const Icon(Icons.contactless_rounded,
-                                color: YosColors.ink, size: 26),
+                                color: YosColors.inkLight, size: 26),
                           ),
                           const SizedBox(width: 14),
-                          const Expanded(
+                          Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('Tap RFID card',
+                                Text(t('Tap RFID card', 'I-tap ang RFID Card'),
                                     style: TextStyle(
+                                        color: YosColors.ink,
                                         fontWeight: FontWeight.w800,
                                         fontSize: 17)),
                                 Text(
-                                    'Enrolled vehicles get a receipt '
-                                    'instantly — no retyping',
+                                    t(
+                                        'Enrolled vehicles get a receipt '
+                                            'instantly — no retyping',
+                                        'Agad na makakakuha ng resibo ang '
+                                            'mga naka-enroll na sasakyan — '
+                                            'walang muling pagta-type'),
                                     style: TextStyle(
                                         color: YosColors.ink,
                                         fontSize: 12,
@@ -224,11 +268,11 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
                         keyboardType: TextInputType.none,
                         textInputAction: TextInputAction.done,
                         onSubmitted: _onRfidScanned,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           filled: true,
-                          fillColor: Colors.white,
+                          fillColor: YosColors.surface,
                           hintText: 'Waiting for a card…',
-                          prefixIcon: Icon(Icons.nfc_rounded),
+                          prefixIcon: const Icon(Icons.nfc_rounded),
                         ),
                       ),
                     ],
@@ -236,8 +280,8 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              const Center(
-                child: Text('Or enter manually',
+              Center(
+                child: Text(t('Or enter manually', 'O Ilagay nang Manu-mano'),
                     style: TextStyle(
                         color: YosColors.sub,
                         fontWeight: FontWeight.w700,
@@ -245,160 +289,167 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
               ),
               const SizedBox(height: 12),
               Form(
-                    key: _formKey,
-                    child: Column(
-                      children: [
-                        PopIn(
-                          delayMs: 60,
-                          child: GlassCard(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Driver details',
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 16)),
-                                const SizedBox(height: 14),
-                                TextFormField(
-                                  controller: _driver,
-                                  textCapitalization:
-                                      TextCapitalization.words,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Driver full name',
-                                    prefixIcon:
-                                        Icon(Icons.person_outline_rounded),
-                                  ),
-                                  validator: (v) =>
-                                      (v == null || v.trim().length < 2)
-                                          ? 'Enter the driver\'s name'
-                                          : null,
-                                ),
-                                const SizedBox(height: 14),
-                                TextFormField(
-                                  controller: _plate,
-                                  inputFormatters: [PlateFormatter()],
-                                  style: text.titleMedium?.copyWith(
-                                      letterSpacing: 3,
-                                      fontFeatures: const [
-                                        FontFeature.tabularFigures()
-                                      ]),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Plate number',
-                                    hintText: 'ABC1234',
-                                    prefixIcon: Icon(
-                                        Icons.confirmation_number_outlined),
-                                  ),
-                                  validator: (v) =>
-                                      (v == null || v.trim().length < 5)
-                                          ? 'Enter a valid plate number'
-                                          : null,
-                                ),
-                              ],
+                key: _formKey,
+                child: Column(
+                  children: [
+                    PopIn(
+                      delayMs: 60,
+                      child: GlassCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(t('Driver details', 'Detalye ng Driver'),
+                                style: TextStyle(
+                                    color: YosColors.ink,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 16)),
+                            const SizedBox(height: 14),
+                            TextFormField(
+                              controller: _driver,
+                              textCapitalization: TextCapitalization.words,
+                              decoration: InputDecoration(
+                                labelText:
+                                    t('Driver full name', "Buong Pangalan ng Driver"),
+                                prefixIcon:
+                                    const Icon(Icons.person_outline_rounded),
+                              ),
+                              validator: (v) =>
+                                  (v == null || v.trim().length < 2)
+                                      ? t("Enter the driver's name",
+                                          'Ilagay ang pangalan ng driver')
+                                      : null,
                             ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        PopIn(
-                          delayMs: 120,
-                          child: GlassCard(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Vehicle type',
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 16)),
-                                const SizedBox(height: 12),
-                                GridView.builder(
-                                  shrinkWrap: true,
-                                  physics:
-                                      const NeverScrollableScrollPhysics(),
-                                  gridDelegate:
-                                      const SliverGridDelegateWithMaxCrossAxisExtent(
-                                    maxCrossAxisExtent: 190,
-                                    mainAxisSpacing: 10,
-                                    crossAxisSpacing: 10,
-                                    childAspectRatio: 2.2,
-                                  ),
-                                  itemCount: VehicleType.values.length,
-                                  itemBuilder: (context, i) => _TypeChip(
-                                    type: VehicleType.values[i],
-                                    color: pastelAt(i),
-                                    selected: VehicleType.values[i] == _type,
-                                    onTap: () {
-                                      HapticFeedback.selectionClick();
-                                      setState(() =>
-                                          _type = VehicleType.values[i]);
-                                    },
-                                  ),
+                            const SizedBox(height: 14),
+                            TextFormField(
+                              controller: _plate,
+                              inputFormatters: [PlateFormatter()],
+                              style: text.titleMedium?.copyWith(
+                                  letterSpacing: 3,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures()
+                                  ]),
+                              // Only while empty — tapping in to fix a typo
+                              // on an already-typed plate shouldn't keep
+                              // reopening the picker (see
+                              // _pickRegisteredVehicle's own doc comment).
+                              onTap: _plate.text.trim().isEmpty
+                                  ? _pickRegisteredVehicle
+                                  : null,
+                              decoration: InputDecoration(
+                                labelText: t('Plate number', 'Plaka Numero'),
+                                hintText: 'ABC1234',
+                                prefixIcon: const Icon(
+                                    Icons.confirmation_number_outlined),
+                                suffixIcon: IconButton(
+                                  tooltip: t('Pick a registered vehicle',
+                                      'Pumili ng nakarehistrong sasakyan'),
+                                  icon: const Icon(Icons.list_alt_rounded),
+                                  onPressed: _pickRegisteredVehicle,
                                 ),
-                              ],
+                              ),
+                              validator: (v) =>
+                                  (v == null || v.trim().length < 5)
+                                      ? t('Enter a valid plate number',
+                                          'Ilagay ang wastong plaka numero')
+                                      : null,
                             ),
-                          ),
+                          ],
                         ),
-                        const SizedBox(height: 14),
-                        PopIn(
-                          delayMs: 180,
-                          child: GlassCard(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Zone',
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 16)),
-                                const SizedBox(height: 10),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: [
-                                    for (final z in kZones)
-                                      ChoiceChip(
-                                        label: Text(z.name),
-                                        selected: z.id == _zoneId,
-                                        selectedColor: YosColors.sage,
-                                        onSelected: (_) =>
-                                            setState(() => _zoneId = z.id),
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 22),
-                        Center(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(
-                                'Fee  ₱${FeeSettingsService.instance.feeFor(_type).toStringAsFixed(2)}',
-                                maxLines: 1,
-                                style: text.headlineMedium
-                                    ?.copyWith(fontSize: 26)),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        OutlinedButton.icon(
-                          onPressed: _submitManual,
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 18),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(999)),
-                            side: const BorderSide(
-                                color: YosColors.ink, width: 1.5),
-                            minimumSize: const Size(double.infinity, 0),
-                          ),
-                          icon: const Icon(Icons.receipt_rounded,
-                              color: YosColors.ink),
-                          label: const Text('Generate receipt',
-                              style: TextStyle(
-                                  color: YosColors.ink,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 15)),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 14),
+                    PopIn(
+                      delayMs: 120,
+                      child: GlassCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(t('Vehicle type', 'Uri ng Sasakyan'),
+                                style: TextStyle(
+                                    color: YosColors.ink,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 16)),
+                            const SizedBox(height: 12),
+                            GridView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              gridDelegate:
+                                  const SliverGridDelegateWithMaxCrossAxisExtent(
+                                maxCrossAxisExtent: 190,
+                                mainAxisSpacing: 10,
+                                crossAxisSpacing: 10,
+                                childAspectRatio: 2.2,
+                              ),
+                              itemCount: VehicleType.values.length,
+                              itemBuilder: (context, i) => _TypeChip(
+                                type: VehicleType.values[i],
+                                color: pastelAt(i),
+                                selected: VehicleType.values[i] == _type,
+                                onTap: () {
+                                  HapticFeedback.selectionClick();
+                                  setState(() => _type = VehicleType.values[i]);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    PopIn(
+                      delayMs: 180,
+                      child: GlassCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(t('Zone', 'Zone'),
+                                style: TextStyle(
+                                    color: YosColors.ink,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 16)),
+                            const SizedBox(height: 10),
+                            ZoneChipGrid(
+                              selectedZoneId: _zoneId,
+                              onChanged: (id) => setState(() => _zoneId = id),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Center(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                            '${t('Fee', 'Bayad')}  ₱${FeeSettingsService.instance.feeFor(_type).toStringAsFixed(2)}',
+                            maxLines: 1,
+                            style: text.headlineMedium?.copyWith(fontSize: 26)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: _submitManual,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999)),
+                        side: BorderSide(color: YosColors.ink, width: 1.5),
+                        minimumSize: const Size(double.infinity, 0),
+                      ),
+                      icon: Icon(Icons.receipt_rounded, color: YosColors.ink),
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(t('Generate receipt', 'Gumawa ng Resibo'),
+                            maxLines: 1,
+                            style: TextStyle(
+                                color: YosColors.ink,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 15)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -427,10 +478,10 @@ class _TypeChip extends StatelessWidget {
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutBack,
         decoration: BoxDecoration(
-          color: selected ? color : Colors.white,
+          color: selected ? color : YosColors.surface,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: selected ? YosColors.ink : const Color(0x14000000),
+            color: selected ? YosColors.inkLight : YosColors.glassBorder,
             width: selected ? 2 : 1,
           ),
         ),
@@ -448,12 +499,14 @@ class _TypeChip extends StatelessWidget {
                     Text(type.label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w800, fontSize: 13)),
+                        style: TextStyle(
+                            color: YosColors.ink,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13)),
                     Text(
                         '₱${FeeSettingsService.instance.feeFor(type).toStringAsFixed(0)}',
                         maxLines: 1,
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                             color: YosColors.sub)),
@@ -462,6 +515,158 @@ class _TypeChip extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Searchable list of every registered vehicle, for [_pickRegisteredVehicle]
+/// — tapping a row pops this sheet with that vehicle; closing it without
+/// tapping one (the X, or dragging it away) pops with nothing, leaving the
+/// plate field exactly as it was.
+class _RegisteredVehiclePicker extends StatefulWidget {
+  const _RegisteredVehiclePicker();
+
+  @override
+  State<_RegisteredVehiclePicker> createState() =>
+      _RegisteredVehiclePickerState();
+}
+
+class _RegisteredVehiclePickerState extends State<_RegisteredVehiclePicker> {
+  final _search = TextEditingController();
+
+  // Grabbed once, not called fresh inside build() — see RfidPointsScreen's
+  // identical `late final` pattern and its doc comment for why.
+  late final Stream<List<RegisteredVehicle>> _vehicles =
+      VehicleRegistry.instance.all();
+
+  @override
+  void initState() {
+    super.initState();
+    _search.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  List<RegisteredVehicle> _filter(List<RegisteredVehicle> list) {
+    final q = _search.text.trim().toUpperCase();
+    if (q.isEmpty) return list;
+    return list
+        .where((v) =>
+            v.plateNumber.toUpperCase().contains(q) ||
+            v.driverName.toUpperCase().contains(q))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.75,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      builder: (_, controller) => Container(
+        decoration: BoxDecoration(
+          color: YosColors.bg,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                  color: YosColors.sub.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(3)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 8, 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                        t('Registered vehicles', 'Mga Nakarehistrong Sasakyan'),
+                        style: TextStyle(
+                            color: YosColors.ink,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 17)),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: Icon(Icons.close_rounded, color: YosColors.sub),
+                    tooltip: t('Close', 'Isara'),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: TextField(
+                controller: _search,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: t('Search plate or driver name',
+                      'Maghanap ng plaka o pangalan ng driver'),
+                  prefixIcon: const Icon(Icons.search_rounded),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: StreamBuilder<List<RegisteredVehicle>>(
+                stream: _vehicles,
+                builder: (context, snap) {
+                  if (!snap.hasData) {
+                    return Center(
+                        child:
+                            CircularProgressIndicator(color: YosColors.accent));
+                  }
+                  final list = _filter(snap.data!);
+                  if (list.isEmpty) {
+                    return Center(
+                      child: Text(
+                          snap.data!.isEmpty
+                              ? t('No registered vehicles yet.',
+                                  'Wala pang nakarehistrong sasakyan.')
+                              : t('No match found.', 'Walang nahanap.'),
+                          style: TextStyle(color: YosColors.sub)),
+                    );
+                  }
+                  return ListView.builder(
+                    controller: controller,
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                    itemCount: list.length,
+                    itemBuilder: (context, i) {
+                      final v = list[i];
+                      final vt = VehicleType.fromLabel(v.vehicleType);
+                      return ListTile(
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                              color: YosColors.mint,
+                              borderRadius: BorderRadius.circular(12)),
+                          child: Icon(vt.icon, color: YosColors.ink, size: 20),
+                        ),
+                        title: Text(v.plateNumber,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1.2)),
+                        subtitle: Text(v.driverName,
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        onTap: () => Navigator.of(context).pop(v),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -480,7 +685,8 @@ class ReceiptPreviewDrawer extends StatefulWidget {
       required this.tx,
       required this.onDone,
       this.registered,
-      this.autoRedeemMax = false});
+      this.autoRedeemMax = false,
+      this.redeemTier});
   final ParkingTransaction tx;
   final VoidCallback onDone;
 
@@ -490,13 +696,20 @@ class ReceiptPreviewDrawer extends StatefulWidget {
   /// below.
   final RegisteredVehicle? registered;
 
-  /// Opens the sheet with redemption already maxed out, for the "Redeem"
-  /// button on RfidPointsScreen — that entry point is specifically for a
-  /// vehicle that already qualifies for a full-fee redemption, so there's
-  /// no reason to make the collector tap the stepper up manually. Every
-  /// other entry point (an RFID tap at Vehicle Entry, manual plate entry)
-  /// leaves this false — redemption there stays opt-in via the stepper.
+  /// Opens the sheet with redemption already maxed out — unused today
+  /// (RfidPointsScreen's own points/discount popup now picks a specific
+  /// [redeemTier] instead of always maxing out), kept for any future entry
+  /// point that wants "just redeem as much as this vehicle qualifies for"
+  /// without the collector choosing a tier first.
   final bool autoRedeemMax;
+
+  /// Opens the sheet with this specific peso tier already selected — from
+  /// RfidPointsScreen's points/discount popup, where the collector picks
+  /// which of the eligible 25/50/75/100% tiers to redeem rather than
+  /// always getting the maximum. Every other entry point (an RFID tap at
+  /// Vehicle Entry/Dashboard, manual plate entry) leaves this null —
+  /// redemption there stays opt-in via the stepper.
+  final int? redeemTier;
 
   @override
   State<ReceiptPreviewDrawer> createState() => _ReceiptPreviewDrawerState();
@@ -507,14 +720,22 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
   bool _saved = false;
   String? _status;
 
-  /// The peso value of the tier the collector chose to redeem against
-  /// this fee — 0 unless they opt in, never auto-applied (except
-  /// widget.autoRedeemMax — see initState). Always 0 or one of
-  /// kRedemptionTiers. Stored as pesos, not points: how many points that
-  /// actually costs depends on the live, admin-editable earn rate (see
-  /// [_redeemedPointsCost]), so pesos is the one number that stays fixed
-  /// regardless of that rate changing mid-transaction.
-  double _redeemedValue = 0;
+  /// Whether [_status] represents success — tracked separately rather than
+  /// sniffing the (now-translatable, see [t]) display text itself, since a
+  /// Filipino _status string no longer starts with the English word
+  /// "Printed".
+  bool _statusOk = false;
+
+  /// The tier actually redeemed — null unless the collector opts in (or
+  /// widget.autoRedeemMax/redeemTier picks one — see initState). Driving
+  /// state lives here rather than on the peso amount so the flat points
+  /// cost (see [redemptionPointsCost]) is never reverse-derived from a
+  /// float.
+  int? _redeemedTier;
+
+  /// The peso discount actually applied — 0 unless [_redeemedTier] is set.
+  double get _redeemedValue =>
+      _redeemedTier == null ? 0 : _vehicleFee * _redeemedTier! / 100;
 
   /// This collector's own phone number, for the receipt footer (see
   /// [_receiptClosingLines]) — fetched once since, unlike their display
@@ -524,48 +745,46 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
   /// rather than falling back to a shared number.
   String? _collectorPhone;
 
-  /// Points [_redeemedValue] actually costs at the current earn rate —
-  /// redemption and earning deliberately share one rate rather than
-  /// keeping two in sync (see kRedemptionTiers' doc).
+  /// Points redeeming costs — flat per [_redeemedTier] (see
+  /// [redemptionPointsCost]), not scaled by fee. 0 while nothing's
+  /// redeemed.
   double get _redeemedPointsCost =>
-      _redeemedValue / PointsSettingsService.instance.pesoPerPoint;
+      _redeemedTier == null ? 0 : redemptionPointsCost(_redeemedTier!);
 
   @override
   void initState() {
     super.initState();
-    if (widget.autoRedeemMax) {
-      _redeemedValue =
-          _eligibleTiers.isEmpty ? 0 : _eligibleTiers.last.toDouble();
+    if (widget.redeemTier != null) {
+      _redeemedTier = widget.redeemTier;
+    } else if (widget.autoRedeemMax) {
+      _redeemedTier = _eligibleTiers.isEmpty ? null : _eligibleTiers.last;
     }
     YosRepository.instance.currentUserPhone().then((phone) {
       if (mounted) setState(() => _collectorPhone = phone);
     });
   }
 
-  /// The points/redemption section only shows on the receipt reached via
-  /// RfidPointsScreen's "Redeem points" button (see [autoRedeemMax]) —
-  /// that's a deliberate, opt-in redemption action, unlike a plain RFID
-  /// tap at Vehicle Entry/Dashboard or manual entry, which are just
-  /// "log and print" and shouldn't surface the points balance at all.
-  bool get _isPointsEnrolled =>
-      widget.registered?.rfidTag != null && widget.autoRedeemMax;
+  /// The points/redemption section shows for any RFID-enrolled vehicle,
+  /// including a plain RFID tap at Vehicle Entry/Dashboard — the
+  /// collector always gets the choice to redeem a tier or leave it alone
+  /// (see [_RedeemPointsCard], which starts with nothing selected unless
+  /// [autoRedeemMax]/[redeemTier] pre-picks one from RfidPointsScreen's
+  /// popup). Not shown for a vehicle with no RFID tag, which has no
+  /// points to show at all.
+  bool get _isPointsEnrolled => widget.registered?.rfidTag != null;
 
-  /// This vehicle type's own fee — the ceiling on what it can ever
-  /// redeem toward, regardless of balance. A ₱50 tricycle fee never
-  /// unlocks the ₱150/₱200 tiers meant for bigger vehicles, no matter
-  /// how many points it's banked.
+  /// This vehicle type's own fee — what each [kRedemptionTiers] percentage
+  /// actually discounts against.
   double get _vehicleFee => FeeSettingsService.instance
       .feeFor(VehicleType.fromLabel(widget.tx.vehicleType));
 
-  /// [kRedemptionTiers] (peso values) both the current balance — once
-  /// converted to points at the live earn rate — and this vehicle type's
-  /// own fee (see [_vehicleFee]) allow, ascending. Empty if either rules
-  /// out even the lowest tier.
+  /// [kRedemptionTiers] the current balance can afford, ascending — each
+  /// tier's points cost is flat (see [redemptionPointsCost]), not scaled
+  /// by fee.
   List<int> get _eligibleTiers {
     final balance = widget.registered?.points ?? 0;
-    final rate = PointsSettingsService.instance.pesoPerPoint;
     return kRedemptionTiers
-        .where((v) => (v / rate) <= balance && v <= _vehicleFee)
+        .where((t) => redemptionPointsCost(t) <= balance)
         .toList();
   }
 
@@ -576,54 +795,56 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
   double get _effectiveFee =>
       (widget.tx.fee - _redeemedValue).clamp(0, widget.tx.fee);
 
-  /// [kReceiptFooter] plus this collector's own contact number and name —
+  /// This collector's own name and contact number, then [kReceiptFooter] —
   /// so a printed receipt shows *this* collector's number, not one shared
-  /// business line, and can be traced back to who processed it. Shared
-  /// between the printed paper and the on-screen preview so they never
-  /// disagree.
+  /// business line, and can be traced back to who processed it, with the
+  /// thank-you note as the very last thing before "Keep this receipt."
+  /// rather than sitting ahead of it. Shared between the printed paper and
+  /// the on-screen preview so they never disagree.
   List<String> get _receiptClosingLines => [
-        ...kReceiptFooter,
-        if (_collectorPhone != null) _collectorPhone!,
         'Collector: ${YosRepository.instance.currentUserName}',
+        if (_collectorPhone != null) _collectorPhone!,
+        ...kReceiptFooter,
       ];
 
   /// The points section shown on the receipt (paper and screen alike),
   /// null for a vehicle that isn't RFID-enrolled since it has no points
   /// to show. earned mirrors what VehicleRegistry.touch will actually
-  /// credit in [_commit] — same formula (pointsForFee on the effective,
-  /// post-redemption fee) — so the receipt never shows a number that
-  /// doesn't match what gets recorded.
+  /// credit in [_commit] — a redeemed transaction is pure spend and earns
+  /// nothing new, so the receipt never shows a number that doesn't match
+  /// what gets recorded.
   ReceiptPoints? get _receiptPoints {
     final reg = widget.registered;
     if (reg?.rfidTag == null) return null;
-    final earned = PointsSettingsService.instance.pointsForFee(_effectiveFee);
     final redeemed = _redeemedPointsCost;
+    final earned = redeemed > 0
+        ? 0.0
+        : PointsSettingsService.instance.pointsForFee(_effectiveFee);
     return (
       earned: earned,
       redeemed: redeemed,
       balance: reg!.points - redeemed + earned,
+      discountPesos: _redeemedValue,
     );
   }
 
   /// The one place this transaction actually gets written — on a
-  /// successful print, or on an explicit "save without printing". A
-  /// generated-but-abandoned receipt (sheet dismissed without either)
-  /// is never saved at all. Guarded by [_saved] so the 900ms delay
-  /// between a successful print and the sheet closing can't let a
-  /// stray tap on "Save without printing" double-write it.
+  /// successful print, the only way to commit one now. A
+  /// generated-but-abandoned receipt (sheet dismissed without printing)
+  /// is never saved at all. Guarded by [_saved] against a double-write.
   ///
   /// Points earned/redeemed audit entries (with exact previous/new
   /// balance) are logged inside VehicleRegistry.touch itself, not here —
   /// it's the one place that actually reads the balance fresh right
   /// before writing it, so its before/after values are authoritative in
   /// a way this screen's possibly-stale widget.registered.points isn't.
-  void _commit({required bool printed}) {
+  void _commit() {
     if (_saved) return;
     _saved = true;
     final fee = _effectiveFee;
     final redeemed = _redeemedPointsCost;
-    YosRepository.instance
-        .saveTransaction(widget.tx.copyWith(printed: printed, fee: fee));
+    YosRepository.instance.saveTransaction(
+        widget.tx.copyWith(printed: true, fee: fee, discount: _redeemedValue));
     VehicleRegistry.instance
         .touch(widget.tx.plateNumber, fee: fee, redeemedPoints: redeemed);
   }
@@ -635,34 +856,19 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
   /// was already confirmed and saved).
   Future<bool> _confirmPayment() async {
     if (_saved) return true;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Payment received?'),
-        content: Text(
-            'Confirm PHP ${_effectiveFee.toStringAsFixed(2)} has been '
-            'collected from the driver before this is logged.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Not yet'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Yes, received',
-                style: TextStyle(
-                    color: YosColors.good, fontWeight: FontWeight.w800)),
-          ),
-        ],
-      ),
+    final confirmed = await showAppConfirmDialog(
+      context,
+      title: t('Payment received?', 'Natanggap na ba ang bayad?'),
+      message: t(
+          'Confirm PHP ${_effectiveFee.toStringAsFixed(2)} has been '
+              'collected from the driver before this is logged.',
+          'Kumpirmahin na nakolekta na ang PHP ${_effectiveFee.toStringAsFixed(2)} '
+              'mula sa driver bago ito i-log.'),
+      confirmLabel: t('Yes, received', 'Oo, natanggap na'),
+      confirmIcon: Icons.check_rounded,
+      confirmColor: YosColors.good,
     );
     return confirmed == true;
-  }
-
-  Future<void> _saveWithoutPrinting() async {
-    if (!await _confirmPayment()) return;
-    _commit(printed: false);
-    widget.onDone();
   }
 
   Future<void> _print() async {
@@ -675,9 +881,10 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
     });
     try {
       if (!printer.isConnected) {
-        setState(() => _status =
-            'No printer paired. Open Printer settings from the dashboard first.');
-        Toast.warn(context, 'Connect a printer first');
+        setState(() => _status = t(
+            'No printer paired. Open Printer settings from the dashboard first.',
+            'Walang naka-pair na printer. Buksan ang Printer settings mula sa dashboard.'));
+        Toast.warn(context, t('Connect a printer first', 'Mag-connect muna ng printer'));
         return;
       }
 
@@ -695,15 +902,21 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
         points: _receiptPoints,
       );
 
-      _commit(printed: true);
+      _commit();
       HapticFeedback.heavyImpact();
-      setState(() => _status = 'Printed ✓');
-      if (mounted) Toast.success(context, 'Receipt printed');
+      setState(() {
+        _status = t('Printed ✓', 'Naka-print ✓');
+        _statusOk = true;
+      });
+      if (mounted) Toast.success(context, t('Receipt printed', 'Naka-print ang resibo'));
       await Future.delayed(const Duration(milliseconds: 900));
       widget.onDone();
     } catch (e) {
-      setState(() => _status = 'Print failed: $e');
-      if (mounted) Toast.error(context, 'Print failed');
+      setState(() {
+        _status = '${t('Print failed', 'Nabigo ang pag-print')}: $e';
+        _statusOk = false;
+      });
+      if (mounted) Toast.error(context, t('Print failed', 'Nabigo ang pag-print'));
     } finally {
       if (mounted) setState(() => _printing = false);
     }
@@ -717,7 +930,7 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
       minChildSize: 0.5,
       maxChildSize: 0.95,
       builder: (_, controller) => Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: YosColors.bg,
           borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
         ),
@@ -735,28 +948,30 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
               ),
             ),
             const SizedBox(height: 8),
-            const Center(
-              child: Text('Receipt ready!',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 20)),
+            Center(
+              child: Text(t('Receipt ready!', 'Handa na ang Resibo!'),
+                  style: TextStyle(
+                      color: YosColors.ink,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 20)),
             ),
             if (_isPointsEnrolled) ...[
               const SizedBox(height: 16),
               _RedeemPointsCard(
                 balance: widget.registered!.points,
-                redeemedValue: _redeemedValue,
+                redeemedTier: _redeemedTier,
                 vehicleFee: _vehicleFee,
                 vehicleType: widget.tx.vehicleType,
-                pesoPerPoint: PointsSettingsService.instance.pesoPerPoint,
                 onChanged: _saved
                     ? null
-                    : (v) => setState(() => _redeemedValue = v),
+                    : (t) => setState(() => _redeemedTier = t),
               ),
             ],
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 30),
               decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: YosColors.surface,
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: kSoftShadow),
               child: Column(
@@ -779,7 +994,7 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
                         )
                         .join('\n'),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: YosColors.ink,
                         fontFamily: 'monospace',
                         fontSize: 13,
@@ -788,7 +1003,7 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      const Text('Driver  ',
+                      Text('Driver  ',
                           style: TextStyle(
                               color: YosColors.ink,
                               fontFamily: 'monospace',
@@ -799,7 +1014,7 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
                           fit: BoxFit.scaleDown,
                           alignment: Alignment.centerLeft,
                           child: Text(tx.driverName,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: YosColors.ink,
                                   fontFamily: 'monospace',
                                   fontSize: 13,
@@ -822,7 +1037,7 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
                         )
                         .join('\n'),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: YosColors.ink,
                         fontFamily: 'monospace',
                         fontSize: 13,
@@ -838,28 +1053,16 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
                 child: Text(_status!,
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                        color: _status!.startsWith('Printed')
-                            ? YosColors.good
-                            : YosColors.bad,
+                        color: _statusOk ? YosColors.good : YosColors.bad,
                         fontWeight: FontWeight.w800)),
               ),
             _printing
-                ? const Center(
-                    child: CircularProgressIndicator(color: YosColors.ink))
+                ? Center(child: CircularProgressIndicator(color: YosColors.ink))
                 : BreathingGlowButton(
-                    label: 'Print receipt',
+                    label: t('Print Receipt', 'I-print ang Resibo'),
                     icon: Icons.print_rounded,
                     onPressed: _print,
                   ),
-            const SizedBox(height: 10),
-            Center(
-              child: TextButton(
-                onPressed: _saveWithoutPrinting,
-                child: const Text('Save without printing',
-                    style: TextStyle(
-                        color: YosColors.sub, fontWeight: FontWeight.w700)),
-              ),
-            ),
           ],
         ),
       ),
@@ -871,51 +1074,44 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
 /// RfidPointsScreen's "Redeem points" button, never on a plain RFID tap
 /// or manual entry's receipt — see
 /// _ReceiptPreviewDrawerState._isPointsEnrolled. Never auto-applies a
-/// discount; [redeemedValue] starts at 0 and only moves via tapping a
-/// tier. Tiers are fixed peso amounts (kRedemptionTiers); what each one
-/// actually costs in points depends on [pesoPerPoint], the live earn
-/// rate shared with redemption.
+/// discount; [redeemedTier] starts null and only moves via tapping a
+/// tier. Tiers are percentages of [vehicleFee] (kRedemptionTiers) for
+/// display, but each one's points cost is flat (see
+/// [redemptionPointsCost]), not scaled by the discount.
 class _RedeemPointsCard extends StatelessWidget {
   const _RedeemPointsCard({
     required this.balance,
-    required this.redeemedValue,
+    required this.redeemedTier,
     required this.vehicleFee,
     required this.vehicleType,
-    required this.pesoPerPoint,
     required this.onChanged,
   });
 
   final double balance;
-  final double redeemedValue;
+  final int? redeemedTier;
 
-  /// This vehicle type's own fee — a tier above it is disabled as "not
-  /// applicable to this vehicle type" even if the balance could
-  /// otherwise afford it.
+  /// This vehicle type's own fee — what each tier percentage discounts
+  /// against (e.g. 25% of a ₱100 fee is ₱25 off).
   final double vehicleFee;
 
-  /// Just for the disabled-tier tooltip text (e.g. "Not applicable to
-  /// Tricycle parking").
+  /// Unused by the disabled-tier check now (a percentage can never
+  /// exceed the fee it's a share of) — kept as a constructor param since
+  /// the caller already has it handy and a future per-vehicle-type
+  /// restriction might want it again.
   final String vehicleType;
-
-  /// Pesos one point is worth right now — the same live, admin-editable
-  /// rate points are earned at. What a tier's peso value converts to in
-  /// points cost.
-  final double pesoPerPoint;
 
   /// Null while the sheet is already saved — the tiers freeze once the
   /// transaction has actually been committed.
-  final ValueChanged<double>? onChanged;
+  final ValueChanged<int?>? onChanged;
 
-  double _pointsCost(int tier) => tier / pesoPerPoint;
+  double _discountFor(int tier) => vehicleFee * tier / 100;
 
-  /// Why [tier] can't be selected right now, or null if it can — a tier
-  /// above this vehicle's own fee is rejected before an insufficient
-  /// balance ever gets checked, since no amount of points changes that.
+  /// Why [tier] can't be selected right now, or null if it can.
   String? _disabledReason(int tier) {
-    if (tier > vehicleFee) return 'Not applicable to $vehicleType parking';
-    final cost = _pointsCost(tier);
+    final cost = redemptionPointsCost(tier);
     if (cost > balance) {
-      return 'Needs ${formatPoints(cost - balance)} more points';
+      return t('Needs ${formatPoints(cost - balance)} more points',
+          'Kailangan pa ng ${formatPoints(cost - balance)} points');
     }
     return null;
   }
@@ -933,13 +1129,17 @@ class _RedeemPointsCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.loyalty_rounded,
+              Icon(Icons.loyalty_rounded,
                   color: YosColors.accentDeep, size: 20),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('${formatPoints(balance)} points available',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w800, fontSize: 14)),
+                child: Text(
+                    t('${formatPoints(balance)} points available',
+                        '${formatPoints(balance)} puntos available'),
+                    style: TextStyle(
+                        color: YosColors.ink,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14)),
               ),
             ],
           ),
@@ -951,26 +1151,50 @@ class _RedeemPointsCard extends StatelessWidget {
               for (final tier in kRedemptionTiers)
                 Builder(builder: (context) {
                   final reason = _disabledReason(tier);
+                  final discount = _discountFor(tier);
                   final chip = ChoiceChip(
-                    label: Text('₱$tier · ${formatPoints(_pointsCost(tier))} pts'),
-                    selected: redeemedValue == tier,
-                    onSelected: onChanged == null || reason != null
+                    label: Text(t(
+                        '₱${discount.toStringAsFixed(0)} off — Requires '
+                            '${formatPoints(redemptionPointsCost(tier))} points',
+                        '₱${discount.toStringAsFixed(0)} off — Kailangan ng '
+                            '${formatPoints(redemptionPointsCost(tier))} points')),
+                    selected: redeemedTier == tier,
+                    // Tappable even when unaffordable — rather than a
+                    // silently-disabled chip, picking one the balance
+                    // can't cover surfaces the Insufficient Points
+                    // warning below instead of just doing nothing.
+                    onSelected: onChanged == null
                         ? null
-                        : (selected) =>
-                            onChanged!(selected ? tier.toDouble() : 0),
+                        : (selected) {
+                            if (!selected) {
+                              onChanged!(null);
+                              return;
+                            }
+                            if (reason != null) {
+                              Toast.error(
+                                  context, t('Insufficient Points', 'Kulang ang Points'));
+                              return;
+                            }
+                            onChanged!(tier);
+                          },
                   );
                   return reason == null
                       ? chip
-                      : Tooltip(message: reason, child: chip);
+                      : Opacity(
+                          opacity: 0.6,
+                          child: Tooltip(message: reason, child: chip),
+                        );
                 }),
             ],
           ),
-          if (redeemedValue > 0) ...[
+          if (redeemedTier != null) ...[
             const SizedBox(height: 8),
             Center(
               child: Text(
-                  '− ₱${redeemedValue.toStringAsFixed(0)} off this fee',
-                  style: const TextStyle(
+                  t(
+                      '− ₱${_discountFor(redeemedTier!).toStringAsFixed(0)} off this fee',
+                      '− ₱${_discountFor(redeemedTier!).toStringAsFixed(0)} bawas sa bayad'),
+                  style: TextStyle(
                       color: YosColors.accentDeep,
                       fontWeight: FontWeight.w700,
                       fontSize: 13)),

@@ -1,4 +1,41 @@
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+
+/// Full-bleed camera preview that crops to fill its bounds (like
+/// BoxFit.cover) instead of stretching. [CameraPreview] sizes itself via
+/// an internal `AspectRatio` matching the camera's true aspect ratio, but
+/// `AspectRatio` only works under *loose* constraints — every FaceID
+/// screen puts its preview in a `Stack(fit: StackFit.expand)` so the dark
+/// background fills edge-to-edge, which hands `CameraPreview` *tight*
+/// full-screen constraints instead. Under a tight box there's only one
+/// possible size, so `AspectRatio` can't honor its target ratio at all —
+/// it just fills those exact bounds regardless of the camera's real
+/// proportions, stretching whatever's in frame. That's most visible as an
+/// oddly elongated face, especially away from the oval scan guide's
+/// center where the eye notices the distortion most.
+///
+/// Fix: give `CameraPreview` a genuinely loose box first (via
+/// [ConstrainedBox], so its own `AspectRatio` sizes itself correctly,
+/// letterboxed within that box), then scale *that* correctly-proportioned
+/// result up with [FittedBox]'s `BoxFit.cover` to fill whatever tight
+/// bounds this widget itself receives — cropping the letterboxed overflow
+/// instead of distorting the image, the same "cover" behavior an ordinary
+/// camera app's live preview has.
+class CoverCameraPreview extends StatelessWidget {
+  const CoverCameraPreview({super.key, required this.controller});
+  final CameraController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return FittedBox(
+      fit: BoxFit.cover,
+      child: ConstrainedBox(
+        constraints: BoxConstraints.loose(const Size(2000, 2000)),
+        child: CameraPreview(controller),
+      ),
+    );
+  }
+}
 
 /// Green/dark-navy palette for the FaceID scan UI — deliberately its own
 /// small palette rather than YosColors, since these screens go for a
@@ -10,7 +47,6 @@ class FaceIdColors {
   FaceIdColors._();
   static const accent = Color(0xFF6FD9BE);
   static const navyDeep = Color(0xFF0B1330);
-  static const navyMid = Color(0xFF141B3D);
   static const good = Color(0xFF2E9E4F);
 }
 
@@ -81,24 +117,32 @@ class _FaceOvalScannerState extends State<FaceOvalScanner>
               child: SizedBox(
                 width: widget.width,
                 height: widget.height,
-                child: AnimatedBuilder(
-                  animation: _line,
-                  builder: (context, _) => Align(
-                    alignment: Alignment(0, -1 + 2 * _line.value),
-                    child: Container(
-                      height: 3,
-                      width: widget.width,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(colors: [
-                          FaceIdColors.accent.withOpacity(0),
-                          FaceIdColors.accent,
-                          FaceIdColors.accent.withOpacity(0),
-                        ]),
-                        boxShadow: [
-                          BoxShadow(
-                              color: FaceIdColors.accent.withOpacity(0.8),
-                              blurRadius: 10),
-                        ],
+                // RepaintBoundary: this repeats continuously for as long as
+                // a scan runs (see initState/didUpdateWidget above) — same
+                // "trace left behind" reasoning as PopIn's matching comment
+                // in glow_effects.dart, isolating it so every tick doesn't
+                // repaint/recomposite the rest of this full-screen camera
+                // UI along with it.
+                child: RepaintBoundary(
+                  child: AnimatedBuilder(
+                    animation: _line,
+                    builder: (context, _) => Align(
+                      alignment: Alignment(0, -1 + 2 * _line.value),
+                      child: Container(
+                        height: 3,
+                        width: widget.width,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(colors: [
+                            FaceIdColors.accent.withOpacity(0),
+                            FaceIdColors.accent,
+                            FaceIdColors.accent.withOpacity(0),
+                          ]),
+                          boxShadow: [
+                            BoxShadow(
+                                color: FaceIdColors.accent.withOpacity(0.8),
+                                blurRadius: 10),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -124,8 +168,7 @@ class _DashedOvalPainter extends CustomPainter {
       ..strokeWidth = 2.5;
     const dashLength = 8.0;
     const gapLength = 6.0;
-    final path = Path()
-      ..addOval(Rect.fromLTWH(0, 0, size.width, size.height));
+    final path = Path()..addOval(Rect.fromLTWH(0, 0, size.width, size.height));
     for (final metric in path.computeMetrics()) {
       var distance = 0.0;
       while (distance < metric.length) {
@@ -199,153 +242,6 @@ class ScanProgressBar extends StatelessWidget {
                   fontWeight: FontWeight.w600)),
         ],
       ],
-    );
-  }
-}
-
-/// Stylized wireframe face icon — an oval outline with a landmark
-/// crosshair, eyes, nose and mouth, drawn rather than a bundled image
-/// asset so it stays crisp at any size and matches [FaceIdColors].
-class FaceWireframeIcon extends StatelessWidget {
-  const FaceWireframeIcon(
-      {super.key, this.size = 140, this.color = FaceIdColors.accent});
-  final double size;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => CustomPaint(
-        size: Size(size, size * 1.15),
-        painter: _FaceWireframePainter(color: color),
-      );
-}
-
-class _FaceWireframePainter extends CustomPainter {
-  _FaceWireframePainter({required this.color});
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final line = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4;
-    final dot = Paint()..color = color;
-
-    canvas.drawOval(Rect.fromLTWH(0, 0, size.width, size.height), line);
-    canvas.drawLine(
-        Offset(size.width / 2, 0), Offset(size.width / 2, size.height), line);
-    canvas.drawLine(Offset(0, size.height * 0.42),
-        Offset(size.width, size.height * 0.42), line);
-    canvas.drawCircle(Offset(size.width * 0.32, size.height * 0.42), 2.5, dot);
-    canvas.drawCircle(Offset(size.width * 0.68, size.height * 0.42), 2.5, dot);
-    canvas.drawPath(
-      Path()
-        ..moveTo(size.width / 2, size.height * 0.42)
-        ..lineTo(size.width * 0.44, size.height * 0.6)
-        ..lineTo(size.width * 0.56, size.height * 0.6)
-        ..close(),
-      line,
-    );
-    canvas.drawLine(Offset(size.width * 0.38, size.height * 0.74),
-        Offset(size.width * 0.62, size.height * 0.74), line);
-  }
-
-  @override
-  bool shouldRepaint(covariant _FaceWireframePainter old) =>
-      old.color != color;
-}
-
-/// Dark "FaceID" splash shown before the camera opens — wireframe icon,
-/// title, a short description, and a "Get Started" CTA. [onClose] shows a
-/// back/close affordance in the top-left when given (e.g. a back button
-/// out of the whole flow); omit it where the caller already provides one.
-class FaceIdIntro extends StatelessWidget {
-  const FaceIdIntro({
-    super.key,
-    required this.description,
-    required this.onGetStarted,
-    this.onClose,
-  });
-
-  final String description;
-  final VoidCallback onGetStarted;
-  final VoidCallback? onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [FaceIdColors.navyDeep, FaceIdColors.navyMid],
-        ),
-      ),
-      child: SafeArea(
-        child: Column(
-          children: [
-            if (onClose != null)
-              Align(
-                alignment: Alignment.topLeft,
-                child: IconButton(
-                  onPressed: onClose,
-                  icon: const Icon(Icons.close_rounded, color: Colors.white70),
-                ),
-              ),
-            const Spacer(),
-            const FaceWireframeIcon(),
-            const SizedBox(height: 28),
-            const Text('FaceID',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 26,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5)),
-            const SizedBox(height: 14),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 36),
-              child: Text(description,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 13,
-                      height: 1.5,
-                      fontWeight: FontWeight.w500)),
-            ),
-            const Spacer(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(28, 0, 28, 32),
-              child: SizedBox(
-                width: double.infinity,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                        colors: [FaceIdColors.accent, Color(0xFF0D6B57)]),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(999),
-                      onTap: onGetStarted,
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 16),
-                        child: Center(
-                          child: Text('Get Started',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 15)),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

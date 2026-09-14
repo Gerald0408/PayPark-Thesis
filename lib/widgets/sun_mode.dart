@@ -35,6 +35,12 @@ class _SunModeSwitcherState extends State<SunModeSwitcher> {
     final sun = LightController.instance.sunMode;
     final baseMediaQuery = MediaQuery.of(context);
     final baseTheme = Theme.of(context);
+    // Max-contrast text against whichever canvas is actually live: pure
+    // black reads great on light mode's white canvas but turns invisible
+    // on dark mode's near-black one, so this has to track YosColors.isDark
+    // rather than always forcing black.
+    final highContrast = YosColors.isDark ? Colors.white : Colors.black;
+    final onHighContrast = YosColors.isDark ? Colors.black : Colors.white;
 
     // Always wraps in the same MediaQuery/Theme structure — only the DATA
     // varies with `sun`, never whether these ancestors exist at all.
@@ -57,12 +63,12 @@ class _SunModeSwitcherState extends State<SunModeSwitcher> {
         data: sun
             ? baseTheme.copyWith(
                 textTheme: baseTheme.textTheme.apply(
-                  bodyColor: Colors.black,
-                  displayColor: Colors.black,
+                  bodyColor: highContrast,
+                  displayColor: highContrast,
                 ),
                 colorScheme: baseTheme.colorScheme.copyWith(
-                  primary: Colors.black,
-                  onPrimary: Colors.white,
+                  primary: highContrast,
+                  onPrimary: onHighContrast,
                 ),
               )
             : baseTheme,
@@ -113,7 +119,10 @@ class _SunModeButtonState extends State<SunModeButton> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(active ? Icons.wb_sunny_rounded : Icons.brightness_medium_rounded,
+            Icon(
+                active
+                    ? Icons.wb_sunny_rounded
+                    : Icons.brightness_medium_rounded,
                 size: 15,
                 color: active ? const Color(0xFF7A5B00) : YosColors.ink),
             const SizedBox(width: 6),
@@ -127,8 +136,7 @@ class _SunModeButtonState extends State<SunModeButton> {
             ),
             if (!c.autoEnabled) ...[
               const SizedBox(width: 4),
-              const Icon(Icons.lock_rounded,
-                  size: 10, color: YosColors.sub),
+              Icon(Icons.lock_rounded, size: 10, color: YosColors.sub),
             ],
           ],
         ),

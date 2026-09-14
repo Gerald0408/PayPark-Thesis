@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +6,7 @@ import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platfor
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/theme.dart';
+import '../services/locale_controller.dart';
 import '../services/printer_extensions.dart';
 import '../services/printer_service.dart';
 import '../widgets/glass_card.dart';
@@ -43,8 +44,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     ].request();
     if (!statuses.values.every((s) => s.isGranted || s.isLimited)) {
       if (mounted) {
-        Toast.warn(context,
-            'Bluetooth permissions are required to find printers');
+        Toast.warn(
+            context,
+            t('Bluetooth permissions are required to find printers',
+                'Kailangan ng Bluetooth permission para makahanap ng printer'));
       }
     }
     _startScan();
@@ -72,9 +75,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     if (mounted) {
       setState(() => _connecting = false);
       if (ok) {
-        Toast.success(context, 'Connected to ${d.name}');
+        Toast.success(
+            context, t('Connected to ${d.name}', 'Nakakonekta sa ${d.name}'));
       } else {
-        Toast.error(context, 'Could not connect to ${d.name}');
+        Toast.error(context,
+            t('Could not connect to ${d.name}', 'Hindi makakonekta sa ${d.name}'));
       }
     }
   }
@@ -91,11 +96,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       await PrinterService.instance.printTest();
       HapticFeedback.heavyImpact();
       if (mounted) {
-        Toast.success(context, 'Test slip sent');
+        Toast.success(context, t('Test slip sent', 'Naipadala ang test slip'));
       }
     } catch (e) {
       if (mounted) {
-        Toast.error(context, 'Test failed: $e');
+        Toast.error(context, t('Test failed: $e', 'Nabigo ang test: $e'));
       }
     } finally {
       if (mounted) setState(() => _testing = false);
@@ -115,8 +120,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       appBar: AppBar(
         automaticallyImplyLeading: !widget.embedded,
         leading: widget.embedded ? null : const BackButton(),
-        title: const Text('Printer settings',
-            style: TextStyle(fontWeight: FontWeight.w800)),
+        title: Text(t('Printer settings', 'Setting ng Printer'),
+            style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: TouchGlowOverlay(
         child: SafeArea(
@@ -125,8 +130,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             children: [
               PopIn(
                 child: GlassCard(
-                  color:
-                      printer.isConnected ? YosColors.mint : YosColors.pistachio,
+                  color: printer.isConnected
+                      ? YosColors.mint
+                      : YosColors.pistachio,
                   child: Row(
                     children: [
                       Container(
@@ -138,7 +144,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                             printer.isConnected
                                 ? Icons.print_rounded
                                 : Icons.print_disabled_rounded,
-                            color: YosColors.ink,
+                            // Fixed, matching the always-white circle behind
+                            // it — not the dynamic YosColors.ink, which would
+                            // go near-white (and vanish) in dark mode.
+                            color: YosColors.inkLight,
                             size: 28),
                       ),
                       const SizedBox(width: 14),
@@ -148,16 +157,20 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                           children: [
                             Text(
                                 printer.isConnected
-                                    ? printer.connectedName ?? 'Printer'
-                                    : 'Printer',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 15)),
+                                    ? printer.connectedName ??
+                                        t('Printer', 'Printer')
+                                    : t('Printer', 'Printer'),
+                                style: TextStyle(
+                                    color: YosColors.ink,
+                                    fontWeight: FontWeight.w800, fontSize: 15)),
                             Text(
                                 printer.isConnected
-                                    ? 'Ready to print receipts'
-                                    : 'Pair a Bluetooth thermal printer below',
-                                style: const TextStyle(
+                                    ? t('Ready to print receipts',
+                                        'Handa nang mag-print ng resibo')
+                                    : t(
+                                        'Pair a Bluetooth thermal printer below',
+                                        'I-pair ang isang Bluetooth thermal printer sa ibaba'),
+                                style: TextStyle(
                                     color: YosColors.ink,
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600)),
@@ -174,13 +187,13 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   children: [
                     Expanded(
                       child: _testing
-                          ? const Center(
+                          ? Center(
                               child: SizedBox(
                                   height: 40,
                                   child: CircularProgressIndicator(
                                       color: YosColors.ink)))
                           : BreathingGlowButton(
-                              label: 'Test print',
+                              label: t('Test print', 'I-test ang Print'),
                               icon: Icons.receipt_long_rounded,
                               onPressed: _testPrint,
                             ),
@@ -194,9 +207,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(999)),
                       ),
-                      icon: const Icon(Icons.link_off_rounded,
-                          color: YosColors.ink),
-                      label: const Text('Disconnect',
+                      icon: Icon(Icons.link_off_rounded, color: YosColors.ink),
+                      label: Text(t('Disconnect', 'Idiskonekta'),
                           style: TextStyle(
                               color: YosColors.ink,
                               fontWeight: FontWeight.w700)),
@@ -207,15 +219,19 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Nearby printers',
+                  Text(t('Nearby printers', 'Mga Malapit na Printer'),
                       style: TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 16)),
+                          color: YosColors.ink,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16)),
                   TextButton.icon(
                     onPressed: _scanning ? null : _startScan,
                     icon: Icon(_scanning
                         ? Icons.hourglass_top_rounded
                         : Icons.refresh_rounded),
-                    label: Text(_scanning ? 'Scanning' : 'Rescan'),
+                    label: Text(_scanning
+                        ? t('Scanning', 'Nag-scan')
+                        : t('Rescan', 'I-scan Ulit')),
                   ),
                 ],
               ),
@@ -235,10 +251,13 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                         const SizedBox(height: 10),
                         Text(
                           _scanning
-                              ? 'Looking for Bluetooth printers'
-                              : 'No printers found. Make sure your printer is on and paired in Bluetooth settings, then rescan.',
+                              ? t('Looking for Bluetooth printers',
+                                  'Naghahanap ng Bluetooth printers')
+                              : t(
+                                  'No printers found. Make sure your printer is on and paired in Bluetooth settings, then rescan.',
+                                  'Walang nahanap na printer. Siguraduhing naka-on at naka-pair ang printer mo sa Bluetooth settings, pagkatapos i-scan ulit.'),
                           textAlign: TextAlign.center,
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: YosColors.sub,
                               fontWeight: FontWeight.w600,
                               fontSize: 13),
@@ -261,35 +280,33 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                               decoration: BoxDecoration(
                                   color: YosColors.seafoam,
                                   borderRadius: BorderRadius.circular(14)),
-                              child: const Icon(Icons.print_rounded,
+                              child: Icon(Icons.print_rounded,
                                   color: YosColors.ink),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(d.name,
-                                      style: const TextStyle(
+                                      style: TextStyle(
+                                          color: YosColors.ink,
                                           fontWeight: FontWeight.w800,
                                           fontSize: 15)),
                                   Text(d.address ?? '',
-                                      style: const TextStyle(
-                                          color: YosColors.sub,
-                                          fontSize: 12)),
+                                      style: TextStyle(
+                                          color: YosColors.sub, fontSize: 12)),
                                 ],
                               ),
                             ),
                             _connecting
-                                ? const SizedBox(
+                                ? SizedBox(
                                     width: 18,
                                     height: 18,
                                     child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: YosColors.ink),
+                                        strokeWidth: 2, color: YosColors.ink),
                                   )
-                                : const Icon(Icons.arrow_forward_rounded,
+                                : Icon(Icons.arrow_forward_rounded,
                                     color: YosColors.sub),
                           ],
                         ),
@@ -302,4 +319,3 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     );
   }
 }
-

@@ -1,79 +1,36 @@
-import 'dart:async';
-
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
-import '../models/transaction.dart';
-import 'firestore_service.dart';
-
-/// Live, admin-editable RFID loyalty-points earn rate, synced through
-/// `settings/points` so every device agrees on the same rate —
-/// firestore.rules restricts writes to the admin account.
+/// RFID loyalty-points earn rate — a fixed, uniform rate applied to every
+/// vehicle type: 0.03 points earned per ₱1 of fee (an RFID tap credits
+/// 3% of the fee in points). No longer admin-editable or synced through
+/// Firestore — this used to be a live `settings/points`-backed rate an
+/// admin could change from RfidPointsScreen's rate-editor card; that card
+/// is gone now that the rate is fixed, by request. Redemption tiers price
+/// separately and flatly (see redemptionPointsCost in core/constants.dart)
+/// — this rate only governs earning.
 class PointsSettingsService extends ChangeNotifier {
   PointsSettingsService._();
   static final PointsSettingsService instance = PointsSettingsService._();
 
-  DocumentReference<Map<String, dynamic>> get _doc =>
-      FirebaseFirestore.instance.collection('settings').doc('points');
+  /// ₱1 of fee earns this many points — 0.03, i.e. an RFID tap credits 3%
+  /// of the fee in points.
+  static const double pointsPerPeso = 0.03;
 
-  /// ₱20 paid = 1 point by default (i.e. 0.5 points per ₱10), until an
-  /// admin overrides the rate.
-  double _pesoPerPoint = 20;
-  StreamSubscription? _sub;
+  /// The inverse of [pointsPerPeso], kept for any call site that wants
+  /// the "pesos per point" shape instead.
+  double get pesoPerPoint => 1 / pointsPerPeso;
 
-  double get pesoPerPoint => _pesoPerPoint;
-
-  /// Call once after Firebase.initializeApp(), alongside
-  /// YosRepository.instance.init() and FeeSettingsService.instance.init().
-  Future<void> init() async {
-    _sub = _doc.snapshots(includeMetadataChanges: true).listen(
-      (snap) {
-        final rate = snap.data()?['peso_per_point'];
-        if (rate is num && rate > 0) _pesoPerPoint = rate.toDouble();
-        notifyListeners();
-      },
-      // This subscribes at app startup (see main.dart), before Firebase
-      // Auth necessarily has a resolved session — settings/points
-      // requires hasFaceId() per firestore.rules, so a listener attached
-      // while signed out (or before a resumed session's token is
-      // recognized yet) hits a permission-denied on that very first
-      // listen. An unhandled stream error here would surface as an
-      // uncaught exception (a red screen) instead of just falling back
-      // to the default rate until a real session actually reconnects it.
-      onError: (Object e) =>
-          debugPrint('settings/points stream error (ignored): $e'),
-    );
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
-  }
+  /// No-op now that there's no live setting to subscribe to — kept only
+  /// so main.dart's startup sequence (alongside YosRepository.init() and
+  /// FeeSettingsService.init()) doesn't need to change.
+  Future<void> init() async {}
 
   /// Points earned for a transaction that charged [fee] — a straight
-  /// fraction of the rate, e.g. a ₱50 fee at the default ₱20/point rate
-  /// earns 2.5 points. Deliberately not rounded down: an admin-set rate
-  /// can still earn a fraction of a point, and flooring that away would
-  /// zero out smaller vehicle types entirely instead of scaling with
-  /// them. This same rate also prices redemption (see kRedemptionTiers
-  /// in core/constants.dart) — one shared rate, not two to keep in sync.
-  double pointsForFee(double fee) => fee / _pesoPerPoint;
-
-  /// Admin-only per firestore.rules — sets a new rate, synced to every
-  /// device. Affects both how many points a fee earns and how many
-  /// points each redemption tier (see kRedemptionTiers) costs, since the
-  /// two share this one rate.
-  Future<void> setPesoPerPoint(double value) async {
-    final previous = _pesoPerPoint;
-    await _doc.set({'peso_per_point': value}, SetOptions(merge: true));
-    await YosRepository.instance.logAudit(
-      AuditAction.pointsRateUpdated,
-      'RFID points rate set to ₱${value.toStringAsFixed(0)} per point',
-      previousValue: previous,
-      newValue: value,
-    );
-  }
+  /// fraction of the fixed rate, e.g. a ₱50 fee earns 2.5 points.
+  /// Deliberately not rounded down: a fraction of a point still counts,
+  /// and flooring that away would zero out smaller vehicle types entirely
+  /// instead of scaling with them.
+  double pointsForFee(double fee) => fee * pointsPerPeso;
 }
 
 /// Shared display formatting for a points value, now that balances can be

@@ -7,6 +7,7 @@ import '../core/auth_errors.dart';
 import '../core/theme.dart';
 import '../core/username.dart';
 import '../services/firestore_service.dart';
+import '../services/locale_controller.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
@@ -69,9 +70,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: BoxDecoration(
+          color: YosColors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: SafeArea(
           top: false,
@@ -83,14 +84,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.of(sheetContext).pop(),
-                    child: const Text('Cancel'),
+                    child: Text(t('Cancel', 'Kanselahin')),
                   ),
-                  const Text('Birthday',
-                      style: TextStyle(fontWeight: FontWeight.w800)),
+                  Text(t('Birthday', 'Kaarawan'),
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
                   TextButton(
-                    onPressed: () =>
-                        Navigator.of(sheetContext).pop(temp),
-                    child: const Text('Done'),
+                    onPressed: () => Navigator.of(sheetContext).pop(temp),
+                    child: Text(t('Done', 'Tapos')),
                   ),
                 ],
               ),
@@ -137,7 +137,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         wantsAdmin: false,
       );
       if (!mounted) return;
-      Toast.success(context, 'Account created');
+      Toast.success(context, t('Account created', 'Nagawa ang account'));
       final email = YosRepository.emailForUsername(username);
       Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => FaceEnrollScreen(
@@ -163,12 +163,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
       ));
     } on FormatException {
-      setState(() => _error =
-          'Username must be 3-20 characters: letters, numbers, "." or "_" only.');
+      setState(() => _error = t(
+          'Username must be 3-20 characters: letters, numbers, "." or "_" only.',
+          'Ang username ay dapat 3-20 na karakter: mga letra, numero, "." o '
+          '"_" lang.'));
     } on FirebaseAuthException catch (e) {
       setState(() => _error = authErrorMessage(e.code));
     } catch (e) {
-      setState(() => _error = 'Couldn\'t create the account: $e');
+      setState(() => _error =
+          t('Couldn\'t create the account: $e', 'Hindi nagawa ang account: $e'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -181,7 +184,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       appBar: AppBar(leading: const BackButton()),
       body: Stack(
         children: [
-          const Positioned(
+          Positioned(
             top: -80,
             left: 0,
             right: 0,
@@ -207,7 +210,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         PopIn(
-                          child: Text('NEW COLLECTOR',
+                          child: Text(t('NEW COLLECTOR', 'BAGONG KOLEKTOR'),
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                   color: YosColors.accentDeep,
@@ -221,11 +224,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             TextSpan(
                               children: [
                                 TextSpan(
-                                    text: 'Create your\n',
+                                    text: t('Create your\n', 'Gumawa ng iyong\n'),
                                     style: text.displayLarge
                                         ?.copyWith(fontSize: 40)),
                                 TextSpan(
-                                    text: 'account',
+                                    text: t('account', 'account'),
                                     style: text.displayLarge?.copyWith(
                                         fontSize: 40,
                                         color: YosColors.accentDeep)),
@@ -235,11 +238,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        const Text(
-                            'Fill in your details. Face ID signs you in '
-                            'day-to-day — this password is your backup, '
-                            'e.g. if you ever need to sign in on a new '
-                            'phone.',
+                        Text(
+                            t(
+                                'Fill in your details. Face ID signs you in '
+                                'day-to-day — this password is your backup, '
+                                'e.g. if you ever need to sign in on a new '
+                                'phone.',
+                                'Punan ang iyong mga detalye. Ang Face ID ang '
+                                'gagamitin mong mag-sign in araw-araw — ang '
+                                'password na ito ay backup mo lang, hal. kung '
+                                'kailangan mong mag-sign in sa bagong '
+                                'telepono.'),
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 color: YosColors.sub,
@@ -260,14 +269,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     textCapitalization:
                                         TextCapitalization.words,
                                     autofillHints: const [AutofillHints.name],
-                                    decoration: const InputDecoration(
-                                      labelText: 'Full name',
-                                      prefixIcon:
-                                          Icon(Icons.person_outline_rounded),
+                                    decoration: InputDecoration(
+                                      labelText: t('Full name', 'Buong Pangalan'),
+                                      prefixIcon: const Icon(
+                                          Icons.person_outline_rounded),
                                     ),
                                     validator: (v) =>
                                         (v == null || v.trim().length < 2)
-                                            ? 'Enter your full name'
+                                            ? t('Enter your full name',
+                                                'Ilagay ang iyong buong pangalan')
                                             : null,
                                   ),
                                   const SizedBox(height: 16),
@@ -277,18 +287,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     autofillHints: const [
                                       AutofillHints.newUsername
                                     ],
-                                    decoration: const InputDecoration(
-                                      labelText: 'Username',
+                                    decoration: InputDecoration(
+                                      labelText: t('Username', 'Username'),
                                       hintText: 'juan.delacruz',
-                                      prefixIcon:
-                                          Icon(Icons.badge_outlined),
+                                      prefixIcon: const Icon(Icons.badge_outlined),
                                     ),
                                     validator: (v) {
                                       try {
                                         normalizeUsername(v ?? '');
                                         return null;
                                       } on FormatException {
-                                        return '3-20 chars: letters, numbers, "." or "_"';
+                                        return t(
+                                            '3-20 chars: letters, numbers, "." or "_"',
+                                            '3-20 karakter: letra, numero, "." o "_"');
                                       }
                                     },
                                   ),
@@ -299,16 +310,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     autofillHints: const [
                                       AutofillHints.telephoneNumber
                                     ],
-                                    decoration: const InputDecoration(
-                                      labelText: 'Phone number',
+                                    decoration: InputDecoration(
+                                      labelText: t('Phone number', 'Numero ng Telepono'),
                                       hintText: '09XXXXXXXXX',
-                                      prefixIcon: Icon(Icons.phone_outlined),
+                                      prefixIcon: const Icon(Icons.phone_outlined),
                                     ),
                                     validator: (v) {
                                       final digits = (v ?? '')
                                           .replaceAll(RegExp(r'[^0-9]'), '');
                                       return digits.length < 10
-                                          ? 'Enter a valid phone number'
+                                          ? t('Enter a valid phone number',
+                                              'Ilagay ang wastong numero ng telepono')
                                           : null;
                                     },
                                   ),
@@ -317,13 +329,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     controller: _birthdayText,
                                     readOnly: true,
                                     onTap: _pickBirthday,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Birthday',
+                                    decoration: InputDecoration(
+                                      labelText: t('Birthday', 'Kaarawan'),
                                       hintText: 'MM/DD/YYYY',
-                                      prefixIcon: Icon(Icons.cake_outlined),
+                                      prefixIcon: const Icon(Icons.cake_outlined),
                                     ),
                                     validator: (_) => _birthday == null
-                                        ? 'Select your birthday'
+                                        ? t('Select your birthday',
+                                            'Piliin ang iyong kaarawan')
                                         : null,
                                   ),
                                   const SizedBox(height: 16),
@@ -334,7 +347,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                       AutofillHints.newPassword
                                     ],
                                     decoration: InputDecoration(
-                                      labelText: 'Password',
+                                      labelText: t('Password', 'Password'),
                                       prefixIcon: const Icon(
                                           Icons.lock_outline_rounded),
                                       suffixIcon: IconButton(
@@ -348,7 +361,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     ),
                                     validator: (v) =>
                                         (v == null || v.length < 8)
-                                            ? 'At least 8 characters'
+                                            ? t('At least 8 characters',
+                                                'Hindi bababa sa 8 na karakter')
                                             : null,
                                   ),
                                   const SizedBox(height: 16),
@@ -359,7 +373,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                       AutofillHints.newPassword
                                     ],
                                     decoration: InputDecoration(
-                                      labelText: 'Confirm password',
+                                      labelText:
+                                          t('Confirm password', 'Kumpirmahin ang Password'),
                                       prefixIcon: const Icon(
                                           Icons.lock_outline_rounded),
                                       suffixIcon: IconButton(
@@ -367,35 +382,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                             ? Icons.visibility_outlined
                                             : Icons.visibility_off_outlined),
                                         onPressed: () => setState(() =>
-                                            _obscureConfirm =
-                                                !_obscureConfirm),
+                                            _obscureConfirm = !_obscureConfirm),
                                       ),
                                     ),
                                     validator: (v) => v != _password.text
-                                        ? 'Passwords don\'t match'
+                                        ? t('Passwords don\'t match',
+                                            'Hindi magkatugma ang password')
                                         : null,
                                   ),
                                   AnimatedSize(
-                                    duration:
-                                        const Duration(milliseconds: 250),
+                                    duration: const Duration(milliseconds: 250),
                                     child: _error == null
                                         ? const SizedBox.shrink()
                                         : Padding(
-                                            padding: const EdgeInsets.only(
-                                                top: 14),
+                                            padding:
+                                                const EdgeInsets.only(top: 14),
                                             child: Row(
                                               children: [
                                                 const Icon(
-                                                    Icons
-                                                        .error_outline_rounded,
+                                                    Icons.error_outline_rounded,
                                                     color: YosColors.bad,
                                                     size: 18),
                                                 const SizedBox(width: 8),
                                                 Expanded(
                                                   child: Text(_error!,
                                                       style: const TextStyle(
-                                                          color:
-                                                              YosColors.bad,
+                                                          color: YosColors.bad,
                                                           fontWeight:
                                                               FontWeight.w600,
                                                           fontSize: 13)),
@@ -406,7 +418,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   ),
                                   const SizedBox(height: 22),
                                   _busy
-                                      ? const Center(
+                                      ? Center(
                                           child: SizedBox(
                                             width: 32,
                                             height: 32,
@@ -416,7 +428,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                           ),
                                         )
                                       : BreathingGlowButton(
-                                          label: 'Create account',
+                                          label: t('Create account', 'Gumawa ng Account'),
                                           onPressed: _register,
                                         ),
                                 ],
@@ -427,7 +439,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         const SizedBox(height: 18),
                         TextButton(
                           onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Already have an account? Sign in'),
+                          child: Text(t('Already have an account? Sign in',
+                              'May account ka na? Mag-sign in')),
                         ),
                       ],
                     ),

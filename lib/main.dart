@@ -1,4 +1,4 @@
-﻿import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +9,7 @@ import 'screens/root_shell.dart';
 import 'screens/splash_screen.dart';
 import 'services/fee_settings_service.dart';
 import 'services/firestore_service.dart';
+import 'services/locale_controller.dart';
 import 'services/points_settings_service.dart';
 import 'widgets/sun_mode.dart';
 
@@ -35,15 +36,26 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('Points settings init failed (continuing): $e');
   }
+  try {
+    await LocaleController.instance.init();
+  } catch (e) {
+    debugPrint('Locale init failed (continuing): $e');
+  }
 
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.dark, // dark icons on light canvas
-    statusBarBrightness: Brightness.light, // iOS: light background
-  ));
+  _applySystemChrome();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   runApp(const YosApp());
+}
+
+/// App is light-mode only (see YosColors) — a fixed light status bar style,
+/// not something that needs to track a toggle.
+void _applySystemChrome() {
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.dark,
+    statusBarBrightness: Brightness.light,
+  ));
 }
 
 class YosApp extends StatelessWidget {
@@ -51,42 +63,61 @@ class YosApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Delivery',
-      debugShowCheckedModeBanner: false,
-      theme: YosTheme.light(),
-      // Applies sun-mode contrast/text-scale overrides to every screen.
-      builder: (context, child) =>
-          SunModeSwitcher(child: child ?? const SizedBox.shrink()),
-      home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Scaffold(
-              backgroundColor: YosColors.bg,
-              body: Center(
-                child: CircularProgressIndicator(color: YosColors.accent),
-              ),
-            );
-          }
-          // Signed in â†’ dashboard. Otherwise play the cinematic splash,
-          // which then hands off to the intro + login flow.
-          //
-          // isAnonymous is deliberately excluded from "signed in" here:
-          // FaceLoginScreen's cross-device cloud fallback (see
-          // _tryCloudMatch) briefly signs in anonymously just to satisfy
-          // firestore.rules' face_profiles read rule before any real
-          // session exists. Since `home` is the root of the whole
-          // Navigator, treating that as "signed in" would swap this
-          // entire subtree to RootShell and back on every such lookup,
-          // tearing down FaceLoginScreen (and its live camera) mid-scan.
-          // Keeping the const SplashScreen() instance across that blip
-          // means Flutter just updates in place instead of remounting.
-          final user = snap.data;
-          final signedIn = user != null && !user.isAnonymous;
-          return signedIn ? const RootShell() : const SplashScreen();
-        },
-      ),
+    // Rebuilds the whole app on a language switch. Wasteful compared to a
+    // proper per-widget lookup, but every t(...) call site (see
+    // locale_controller.dart) just reads LocaleController.instance directly
+    // rather than pulling it from an InheritedWidget -- the only way those
+    // all pick up the new language is a fresh build from here down.
+    return ListenableBuilder(
+      listenable: LocaleController.instance,
+      builder: (context, _) {
+        return MaterialApp(
+          title: 'Delivery',
+          debugShowCheckedModeBanner: false,
+          theme: YosTheme.current(),
+          // Applies sun-mode contrast/text-scale overrides to every screen.
+          builder: (context, child) =>
+              SunModeSwitcher(child: child ?? const SizedBox.shrink()),
+          home: StreamBuilder<User?>(
+            stream: FirebaseAuth.instance.authStateChanges(),
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return Scaffold(
+                  backgroundColor: YosColors.bg,
+                  body: Center(
+                    child: CircularProgressIndicator(color: YosColors.accent),
+                  ),
+                );
+              }
+              // Signed in â†’ dashboard. Otherwise play the cinematic splash,
+              // which then hands off to the intro + login flow.
+              //
+              // isAnonymous is deliberately excluded from "signed in" here:
+              // FaceLoginScreen's cross-device cloud fallback (see
+              // _tryCloudMatch) briefly signs in anonymously just to satisfy
+              // firestore.rules' face_profiles read rule before any real
+              // session exists. Since `home` is the root of the whole
+              // Navigator, treating that as "signed in" would swap this
+              // entire subtree to RootShell and back on every such lookup,
+              // tearing down FaceLoginScreen (and its live camera) mid-scan.
+              //
+              // RootShell/SplashScreen deliberately NOT const: this whole
+              // subtree already rebuilds on a language switch (see the
+              // ListenableBuilder above), but a `const RootShell()` instance
+              // would otherwise be recognized as identical to the previous
+              // frame's and skip rebuilding, leaving it showing stale text --
+              // every t(...) call site in this app reads LocaleController
+              // directly rather than through an InheritedWidget, so nothing
+              // else forces that subtree to actually rebuild. A plain
+              // (non-const) instance goes through the normal update path
+              // instead, so it always re-reads the current language.
+              final user = snap.data;
+              final signedIn = user != null && !user.isAnonymous;
+              return signedIn ? RootShell() : SplashScreen();
+            },
+          ),
+        );
+      },
     );
   }
 }

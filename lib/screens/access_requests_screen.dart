@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../core/theme.dart';
 import '../models/access_request.dart';
 import '../services/firestore_service.dart';
+import '../services/locale_controller.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
 import '../widgets/reset_password_dialog.dart';
@@ -42,9 +43,13 @@ class _AccessRequestsScreenState extends State<AccessRequestsScreen> {
   Future<void> _dismiss(BuildContext context, AccessRequest r) async {
     try {
       await YosRepository.instance.resolveAccessRequest(r.id);
-      if (context.mounted) Toast.info(context, 'Dismissed');
+      if (context.mounted) {
+        Toast.info(context, t('Dismissed', 'Na-dismiss'));
+      }
     } catch (e) {
-      if (context.mounted) Toast.error(context, 'Couldn\'t dismiss: $e');
+      if (context.mounted) {
+        Toast.error(context, t('Couldn\'t dismiss: $e', 'Hindi ma-dismiss: $e'));
+      }
     }
   }
 
@@ -53,8 +58,8 @@ class _AccessRequestsScreenState extends State<AccessRequestsScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const BackButton(),
-        title: const Text('Access requests',
-            style: TextStyle(fontWeight: FontWeight.w800)),
+        title: Text(t('Access requests', 'Mga Kahilingan sa Access'),
+            style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: TouchGlowOverlay(
         child: SafeArea(
@@ -65,24 +70,24 @@ class _AccessRequestsScreenState extends State<AccessRequestsScreen> {
                 return Center(
                   child: Padding(
                     padding: const EdgeInsets.all(28),
-                    child: Text('Couldn\'t load requests: ${snap.error}',
+                    child: Text(
+                        t('Couldn\'t load requests: ${snap.error}',
+                            'Hindi ma-load ang mga kahilingan: ${snap.error}'),
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: YosColors.bad)),
                   ),
                 );
               }
               if (!snap.hasData) {
-                return const Center(
-                    child:
-                        CircularProgressIndicator(color: YosColors.ink));
+                return Center(
+                    child: CircularProgressIndicator(color: YosColors.ink));
               }
               final list = snap.data!;
               if (list.isEmpty) {
-                return const Center(
-                  child: Text('No pending requests.',
+                return Center(
+                  child: Text(t('No pending requests.', 'Walang nakabinbing kahilingan.'),
                       style: TextStyle(
-                          color: YosColors.sub,
-                          fontWeight: FontWeight.w600)),
+                          color: YosColors.sub, fontWeight: FontWeight.w600)),
                 );
               }
               return ListView.builder(
@@ -105,8 +110,7 @@ class _AccessRequestsScreenState extends State<AccessRequestsScreen> {
                                   height: 44,
                                   decoration: BoxDecoration(
                                       color: YosColors.warn,
-                                      borderRadius:
-                                          BorderRadius.circular(14)),
+                                      borderRadius: BorderRadius.circular(14)),
                                   child: const Icon(
                                       Icons.notifications_active_rounded,
                                       color: Colors.white),
@@ -119,18 +123,21 @@ class _AccessRequestsScreenState extends State<AccessRequestsScreen> {
                                     children: [
                                       Text(
                                           r.name.isEmpty
-                                              ? '(no name given)'
+                                              ? t('(no name given)', '(walang pangalan)')
                                               : r.name,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
+                                          style: TextStyle(
+                                              color: YosColors.ink,
                                               fontWeight: FontWeight.w800,
                                               fontSize: 15)),
                                       Text(
-                                          'requested ${DateFormat('MMM d, y · h:mm a').format(r.requestedAt)}',
+                                          t(
+                                              'requested ${DateFormat('MMM d, y · h:mm a').format(r.requestedAt)}',
+                                              'hiniling noong ${DateFormat('MMM d, y · h:mm a').format(r.requestedAt)}'),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                               color: YosColors.sub,
                                               fontSize: 12,
                                               fontWeight: FontWeight.w600)),
@@ -138,9 +145,10 @@ class _AccessRequestsScreenState extends State<AccessRequestsScreen> {
                                   ),
                                 ),
                                 IconButton(
-                                  tooltip: 'Dismiss without action',
+                                  tooltip:
+                                      t('Dismiss without action', 'I-dismiss nang walang aksyon'),
                                   onPressed: () => _dismiss(context, r),
-                                  icon: const Icon(Icons.close_rounded,
+                                  icon: Icon(Icons.close_rounded,
                                       color: YosColors.sub),
                                 ),
                               ],
@@ -153,7 +161,13 @@ class _AccessRequestsScreenState extends State<AccessRequestsScreen> {
                                     grantAccessRequestReset(context, r),
                                 icon: const Icon(Icons.lock_reset_rounded,
                                     size: 18),
-                                label: const Text('Grant password reset'),
+                                label: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                      t('Grant password reset',
+                                          'Payagan ang Pag-reset ng Password'),
+                                      maxLines: 1),
+                                ),
                               ),
                             ),
                           ],

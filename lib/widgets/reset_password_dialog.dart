@@ -11,6 +11,7 @@ import '../core/username.dart';
 import '../models/access_request.dart';
 import '../models/collector.dart';
 import '../services/firestore_service.dart';
+import '../services/locale_controller.dart';
 import 'toast.dart';
 
 /// Admin-driven "reset access" flow for a locked-out collector — shows a
@@ -50,8 +51,7 @@ Future<void> grantAccessRequestReset(
   if (!context.mounted) return;
   final picked = await showDialog<Collector>(
     context: context,
-    builder: (_) =>
-        CollectorPickerDialog(all: all, initialQuery: request.name),
+    builder: (_) => CollectorPickerDialog(all: all, initialQuery: request.name),
   );
   if (picked == null || !context.mounted) return;
 
@@ -64,7 +64,9 @@ Future<void> grantAccessRequestReset(
   } catch (e) {
     if (context.mounted) {
       Toast.error(
-          context, 'Reset succeeded, but couldn\'t clear the request: $e');
+          context,
+          t('Reset succeeded, but couldn\'t clear the request: $e',
+              'Matagumpay ang reset, pero hindi na-clear ang request: $e'));
     }
   }
 }
@@ -75,7 +77,8 @@ Future<void> grantAccessRequestReset(
 /// lists the full roster underneath, live-filtered as you type. Tapping
 /// any row pops the dialog with that [Collector].
 class CollectorPickerDialog extends StatefulWidget {
-  const CollectorPickerDialog({super.key, required this.all, required this.initialQuery});
+  const CollectorPickerDialog(
+      {super.key, required this.all, required this.initialQuery});
 
   final List<Collector> all;
   final String initialQuery;
@@ -103,50 +106,84 @@ class _CollectorPickerDialogState extends State<CollectorPickerDialog> {
                 c.name.toLowerCase().contains(q) ||
                 c.username.toLowerCase().contains(q))
             .toList();
-    return AlertDialog(
-      title: const Text('Which collector is this?'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextField(
-              controller: _search,
-              autofocus: true,
-              decoration: const InputDecoration(
-                hintText: 'Search name or username',
-                prefixIcon: Icon(Icons.search_rounded),
-              ),
-              onChanged: (_) => setState(() {}),
+    return Dialog(
+      backgroundColor: YosColors.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 8, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(t('Which collector is this?', 'Sinong kolektor ito?'),
+                      style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                          color: YosColors.ink)),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: Icon(Icons.close_rounded, color: YosColors.sub),
+                  tooltip: t('Cancel', 'Kanselahin'),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 320,
-              child: filtered.isEmpty
-                  ? const Center(child: Text('No matches.'))
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: filtered.length,
-                      itemBuilder: (_, i) {
-                        final c = filtered[i];
-                        return ListTile(
-                          title: Text(c.name),
-                          subtitle: Text('@${c.username}'),
-                          onTap: () => Navigator.pop(context, c),
-                        );
-                      },
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _search,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: t('Search name or username',
+                          'Maghanap ng pangalan o username'),
+                      prefixIcon: const Icon(Icons.search_rounded),
                     ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  // Flexible + a maxHeight cap, not a fixed-height SizedBox:
+                  // the search field above autofocuses, which brings up the
+                  // keyboard immediately and can leave the dialog's content
+                  // area with well under 320px of actual room — a fixed
+                  // height doesn't know that and just overflows. This still
+                  // caps out at 320 when there's space, but shrinks (and
+                  // scrolls internally) instead of overflowing when there
+                  // isn't.
+                  Flexible(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 320),
+                      child: filtered.isEmpty
+                          ? Center(child: Text(t('No matches.', 'Walang tugma.')))
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: filtered.length,
+                              itemBuilder: (_, i) {
+                                final c = filtered[i];
+                                return ListTile(
+                                  title: Text(c.name),
+                                  subtitle: Text('@${c.username}'),
+                                  onTap: () => Navigator.pop(context, c),
+                                );
+                              },
+                            ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-      ],
     );
   }
 }
@@ -198,9 +235,9 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: BoxDecoration(
+          color: YosColors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: SafeArea(
           top: false,
@@ -212,13 +249,13 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.of(sheetContext).pop(),
-                    child: const Text('Cancel'),
+                    child: Text(t('Cancel', 'Kanselahin')),
                   ),
-                  const Text('Birthday',
-                      style: TextStyle(fontWeight: FontWeight.w800)),
+                  Text(t('Birthday', 'Kaarawan'),
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
                   TextButton(
                     onPressed: () => Navigator.of(sheetContext).pop(temp),
-                    child: const Text('Done'),
+                    child: Text(t('Done', 'Tapos')),
                   ),
                 ],
               ),
@@ -264,7 +301,7 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     if (_birthday == null) {
-      setState(() => _error = 'Select a birthday.');
+      setState(() => _error = t('Select a birthday.', 'Piliin ang kaarawan.'));
       return;
     }
     setState(() {
@@ -298,13 +335,18 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
         throw StateError('Could not find an available username.');
       }
       if (!mounted) return;
-      Toast.success(context,
-          '${widget.collector.name}\'s access was reset — new username: $username');
+      Toast.success(
+          context,
+          t(
+              '${widget.collector.name}\'s access was reset — new username: $username',
+              'Na-reset ang access ni ${widget.collector.name} — bagong '
+              'username: $username'));
       Navigator.of(context).pop(username);
     } on FirebaseAuthException catch (e) {
       setState(() => _error = authErrorMessage(e.code));
     } catch (e) {
-      setState(() => _error = 'Couldn\'t reset access: $e');
+      setState(() =>
+          _error = t('Couldn\'t reset access: $e', 'Hindi na-reset ang access: $e'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -316,7 +358,7 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
       backgroundColor: YosColors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(24, 16, 16, 24),
         child: SingleChildScrollView(
           child: Form(
             key: _formKey,
@@ -324,33 +366,60 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Reset access for ${widget.collector.name}',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w800, fontSize: 18)),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                          t('Reset access for ${widget.collector.name}',
+                              'I-reset ang access ni ${widget.collector.name}'),
+                          style: TextStyle(
+                              color: YosColors.ink,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18)),
+                    ),
+                    IconButton(
+                      onPressed:
+                          _busy ? null : () => Navigator.of(context).pop(),
+                      icon: Icon(Icons.close_rounded, color: YosColors.sub),
+                      tooltip: t('Cancel', 'Kanselahin'),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 6),
-                const Text(
-                    'Their old sign-in stops working once this is saved. '
-                    'A new username is generated automatically — pick a '
-                    'passcode and tell them both directly, that\'s what '
-                    'they\'ll use to sign in (and to link Face ID on any '
-                    'new phone).',
+                Text(
+                    t(
+                        'Their old sign-in stops working once this is saved. '
+                        'A new username is generated automatically — pick a '
+                        'passcode and tell them both directly, that\'s what '
+                        'they\'ll use to sign in (and to link Face ID on any '
+                        'new phone).',
+                        'Hindi na gagana ang lumang sign-in nila kapag na-save '
+                        'na ito. Awtomatikong bubuo ng bagong username — '
+                        'pumili ng passcode at sabihin sa kanila nang '
+                        'direkta ang dalawa, ito ang gagamitin nilang '
+                        'mag-sign in (at mag-link ng Face ID sa bagong '
+                        'telepono).'),
                     style: TextStyle(color: YosColors.sub, fontSize: 13)),
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _name,
-                  decoration: const InputDecoration(labelText: 'Full name'),
+                  decoration: InputDecoration(labelText: t('Full name', 'Buong Pangalan')),
                   validator: (v) => (v == null || v.trim().length < 2)
-                      ? 'Enter their full name'
+                      ? t('Enter their full name', 'Ilagay ang buo nilang pangalan')
                       : null,
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
                   controller: _phone,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(labelText: 'Phone number'),
+                  decoration:
+                      InputDecoration(labelText: t('Phone number', 'Numero ng Telepono')),
                   validator: (v) {
                     final digits = (v ?? '').replaceAll(RegExp(r'[^0-9]'), '');
-                    return digits.length < 10 ? 'Enter a valid phone number' : null;
+                    return digits.length < 10
+                        ? t('Enter a valid phone number',
+                            'Ilagay ang wastong numero ng telepono')
+                        : null;
                   },
                 ),
                 const SizedBox(height: 14),
@@ -358,17 +427,18 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
                   controller: _birthdayText,
                   readOnly: true,
                   onTap: _pickBirthday,
-                  decoration: const InputDecoration(
-                      labelText: 'Birthday', hintText: 'MM/DD/YYYY'),
-                  validator: (_) =>
-                      _birthday == null ? 'Select a birthday' : null,
+                  decoration: InputDecoration(
+                      labelText: t('Birthday', 'Kaarawan'), hintText: 'MM/DD/YYYY'),
+                  validator: (_) => _birthday == null
+                      ? t('Select a birthday', 'Piliin ang kaarawan')
+                      : null,
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
                   controller: _password,
                   obscureText: _obscurePassword,
                   decoration: InputDecoration(
-                    labelText: 'New passcode',
+                    labelText: t('New passcode', 'Bagong Passcode'),
                     suffixIcon: IconButton(
                       icon: Icon(_obscurePassword
                           ? Icons.visibility_outlined
@@ -377,15 +447,16 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
                           setState(() => _obscurePassword = !_obscurePassword),
                     ),
                   ),
-                  validator: (v) =>
-                      (v == null || v.length < 8) ? 'At least 8 characters' : null,
+                  validator: (v) => (v == null || v.length < 8)
+                      ? t('At least 8 characters', 'Hindi bababa sa 8 na karakter')
+                      : null,
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
                   controller: _confirmPassword,
                   obscureText: _obscureConfirm,
                   decoration: InputDecoration(
-                    labelText: 'Confirm passcode',
+                    labelText: t('Confirm passcode', 'Kumpirmahin ang Passcode'),
                     suffixIcon: IconButton(
                       icon: Icon(_obscureConfirm
                           ? Icons.visibility_outlined
@@ -394,39 +465,41 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
                           setState(() => _obscureConfirm = !_obscureConfirm),
                     ),
                   ),
-                  validator: (v) =>
-                      v != _password.text ? 'Passcodes don\'t match' : null,
+                  validator: (v) => v != _password.text
+                      ? t('Passcodes don\'t match', 'Hindi magkatugma ang passcode')
+                      : null,
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
                   Text(_error!,
-                      style: const TextStyle(color: YosColors.bad, fontSize: 13)),
+                      style:
+                          const TextStyle(color: YosColors.bad, fontSize: 13)),
                 ],
                 const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextButton(
-                        onPressed:
-                            _busy ? null : () => Navigator.of(context).pop(),
-                        child: const Text('Cancel'),
-                      ),
+                Material(
+                  color: YosColors.accent,
+                  borderRadius: BorderRadius.circular(999),
+                  child: InkWell(
+                    onTap: _busy ? null : _submit,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      alignment: Alignment.center,
+                      child: _busy
+                          ? SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: YosColors.onAccent),
+                            )
+                          : Text(t('Reset access', 'I-reset ang Access'),
+                              style: TextStyle(
+                                  color: YosColors.onAccent,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15)),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: _busy ? null : _submit,
-                        child: _busy
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Text('Reset access'),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),

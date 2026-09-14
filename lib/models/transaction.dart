@@ -13,6 +13,7 @@ class ParkingTransaction {
     this.printed = false,
     this.docId,
     this.pendingSync = false,
+    this.discount = 0,
   });
 
   final String trackingId;
@@ -28,7 +29,15 @@ class ParkingTransaction {
   /// True while the write only exists in the local Firestore cache.
   final bool pendingSync;
 
-  ParkingTransaction copyWith({bool? printed, double? fee}) =>
+  /// Pesos knocked off this transaction's fee via an RFID points
+  /// redemption (see ReceiptPreviewDrawer._redeemedValue) — 0 for the
+  /// common case of no redemption. [fee] is always the already-discounted
+  /// amount actually charged; this is what makes that visible after the
+  /// fact instead of a past transaction just looking like a plain, lower
+  /// fee with no record a discount was ever applied.
+  final double discount;
+
+  ParkingTransaction copyWith({bool? printed, double? fee, double? discount}) =>
       ParkingTransaction(
         trackingId: trackingId,
         driverName: driverName,
@@ -40,6 +49,7 @@ class ParkingTransaction {
         printed: printed ?? this.printed,
         docId: docId,
         pendingSync: pendingSync,
+        discount: discount ?? this.discount,
       );
 
   Map<String, dynamic> toMap() => {
@@ -51,6 +61,7 @@ class ParkingTransaction {
         'zone_id': zoneId,
         'timestamp': Timestamp.fromDate(timestamp),
         'printed': printed,
+        if (discount > 0) 'discount': discount,
       };
 
   factory ParkingTransaction.fromDoc(DocumentSnapshot doc) {
@@ -66,6 +77,7 @@ class ParkingTransaction {
       timestamp: (d['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
       printed: d['printed'] ?? false,
       pendingSync: doc.metadata.hasPendingWrites,
+      discount: (d['discount'] as num?)?.toDouble() ?? 0,
     );
   }
 }
@@ -83,6 +95,7 @@ class AuditLog {
     required this.actionType,
     required this.description,
     required this.timestamp,
+    this.actorName,
     this.pendingSync = false,
     this.previousValue,
     this.newValue,
@@ -90,6 +103,13 @@ class AuditLog {
 
   final String logId;
   final String actorId;
+  // Snapshotted at write time (see YosRepository.logAudit), not resolved
+  // live from collectors/{actorId} — a name change or account removal
+  // later shouldn't rewrite what the audit trail already says happened.
+  // Null for logs written before this field existed — AuditScreen's own
+  // _actorDisplay is what falls back to a live uid lookup (or the raw
+  // actorId) for those.
+  final String? actorName;
   final String actionType;
   final String description;
   final DateTime timestamp;
@@ -100,6 +120,7 @@ class AuditLog {
   Map<String, dynamic> toMap() => {
         'log_id': logId,
         'actor_id': actorId,
+        if (actorName != null) 'actor_name': actorName,
         'action_type': actionType,
         'description': description,
         'timestamp': Timestamp.fromDate(timestamp),
@@ -109,9 +130,11 @@ class AuditLog {
 
   factory AuditLog.fromDoc(DocumentSnapshot doc) {
     final d = doc.data() as Map<String, dynamic>;
+    final actorName = d['actor_name'];
     return AuditLog(
       logId: d['log_id'] ?? doc.id,
       actorId: d['actor_id'] ?? '',
+      actorName: actorName is String && actorName.isNotEmpty ? actorName : null,
       actionType: d['action_type'] ?? '',
       description: d['description'] ?? '',
       timestamp: (d['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -140,6 +163,8 @@ class AuditAction {
   static const printReceipt = 'PRINT_RECEIPT';
   static const feeUpdated = 'FEE_UPDATED';
   static const deactivateCollector = 'DEACTIVATE_COLLECTOR';
+  static const restoreCollector = 'RESTORE_COLLECTOR';
+  static const permanentlyDeleteCollector = 'PERMANENTLY_DELETE_COLLECTOR';
   static const claimAdmin = 'CLAIM_ADMIN';
   static const adminPromoted = 'ADMIN_PROMOTED';
   static const adminDemoted = 'ADMIN_DEMOTED';

@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -12,6 +12,7 @@ import '../core/constants.dart';
 import '../core/username.dart';
 import '../models/access_request.dart';
 import '../models/collector.dart';
+import '../models/trashed_collector.dart';
 import '../models/transaction.dart';
 import 'face_auth_service.dart';
 import 'fee_settings_service.dart';
@@ -64,6 +65,8 @@ class YosRepository extends ChangeNotifier {
   CollectionReference get _tx => _db.collection('transactions');
   CollectionReference get _audit => _db.collection('audit_logs');
   CollectionReference get _collectors => _db.collection('collectors');
+  CollectionReference get _trashedCollectors =>
+      _db.collection('trashed_collectors');
   CollectionReference get _faceProfiles => _db.collection('face_profiles');
 
   /// Call once after Firebase.initializeApp().
@@ -297,7 +300,7 @@ class YosRepository extends ChangeNotifier {
     // permission-denied as "registration failed" for an account that was
     // actually created fine.
     bool isAdmin = false;
-    for (var attempt = 0; ; attempt++) {
+    for (var attempt = 0;; attempt++) {
       try {
         isAdmin = await _db.runTransaction<bool>((tx) async {
           final bootstrap = await tx.get(bootstrapRef);
@@ -339,7 +342,7 @@ class YosRepository extends ChangeNotifier {
     // dispatched right after sign-in can transiently see the token as not
     // yet recognized. Retry rather than let the route guard hang or
     // wrongly bounce a fully-enrolled account back to the password gate.
-    for (var attempt = 0; ; attempt++) {
+    for (var attempt = 0;; attempt++) {
       try {
         final doc = await _collectors.doc(uid).get();
         return (doc.data() as Map<String, dynamic>?)?['face_id_enrolled'] ==
@@ -367,7 +370,7 @@ class YosRepository extends ChangeNotifier {
     // come back permission-denied even though the rule itself would allow
     // it a moment later — retry with backoff rather than surfacing that as
     // a real failure.
-    for (var attempt = 0; ; attempt++) {
+    for (var attempt = 0;; attempt++) {
       try {
         await _collectors.doc(uid).update({'face_id_enrolled': true});
         return;
@@ -376,6 +379,41 @@ class YosRepository extends ChangeNotifier {
         await Future.delayed(Duration(milliseconds: 400 * (attempt + 1)));
       }
     }
+  }
+
+  /// Self-service edit of the signed-in collector's own name/phone/
+  /// birthday — for ProfileScreen's own "Edit" flow. Deliberately narrower
+  /// than admin's CollectorsScreen actions: no username, role, or account
+  /// recovery here, just the plain details captured at registration (see
+  /// firestore.rules' collectors/{uid} update rule for the matching
+  /// self-serve branch that only allows exactly these three fields).
+  Future<void> updateOwnProfile({
+    required String name,
+    String? phone,
+    DateTime? birthday,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      throw StateError('updateOwnProfile called while signed out');
+    }
+    await _collectors.doc(uid).update({
+      'name': name,
+      'phone': phone,
+      'birthday': birthday == null ? null : Timestamp.fromDate(birthday),
+    });
+  }
+
+  /// Self-service profile photo update — its own single-field write,
+  /// separate from [updateOwnProfile], since ProfileScreen applies a new
+  /// photo immediately on pick rather than bundling it into that form's
+  /// Save changes / Cancel flow (see firestore.rules' matching photo_url
+  /// self-serve branch).
+  Future<void> updateOwnPhotoUrl(String url) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      throw StateError('updateOwnPhotoUrl called while signed out');
+    }
+    await _collectors.doc(uid).update({'photo_url': url});
   }
 
   /// Live admin status of whoever's currently signed in — false while
@@ -471,15 +509,27 @@ class YosRepository extends ChangeNotifier {
       .snapshots()
       .map((s) => s.docs.map(Collector.fromDoc).toList());
 
-  /// Deletes a collector's registration doc — with no Cloud Functions or
-  /// admin email to run a real password reset, this is the practical
-  /// stand-in: a locked-out collector (see requestAccessReset) gets
-  /// deactivated here, then re-registers clean with a new username and
-  /// password. Their Firebase Auth account itself isn't
-  /// deleted (would need Admin SDK), but without a collectors/{uid} doc
-  /// they no longer pass isCollector() in firestore.rules, so it's a real
-  /// deactivation from the app's perspective.
+  /// Deactivates a collector by moving their collectors/{uid} doc into
+  /// trashed_collectors/{uid} — with no Cloud Functions or admin email to
+  /// run a real password reset, this is the practical stand-in: a
+  /// locked-out collector (see requestAccessReset) gets deactivated here,
+  /// then either re-registers clean with a new username and password, or
+  /// an admin restores this same doc from the trash bin (see
+  /// [restoreCollector]) if the removal was a mistake. Their Firebase Auth
+  /// account itself isn't deleted (would need Admin SDK) — it's exactly
+  /// this collectors/{uid} doc's absence that fails isCollector() in
+  /// firestore.rules, so it's a real deactivation from the app's
+  /// perspective either way, trashed or gone for good.
   Future<void> deactivateCollector(String uid, String name) async {
+    final snap = await _collectors.doc(uid).get();
+    final data = snap.data();
+    if (data is Map<String, dynamic>) {
+      await _trashedCollectors.doc(uid).set({
+        ...data,
+        'deactivated_at': Timestamp.now(),
+        'deactivated_by': currentUserName,
+      });
+    }
     await _collectors.doc(uid).delete();
     // Best-effort: a removed collector's cloud-synced face (see
     // syncFaceEmbedding) must not keep surfacing as a valid cloud match
@@ -500,6 +550,45 @@ class YosRepository extends ChangeNotifier {
     await logAudit(AuditAction.deactivateCollector, 'Deactivated $name');
   }
 
+  /// All trashed (deactivated) collectors — admin-only per
+  /// firestore.rules, same shape as [allCollectors].
+  Stream<List<TrashedCollector>> trashedCollectors() => _trashedCollectors
+      .orderBy('deactivated_at', descending: true)
+      .snapshots()
+      .map((s) => s.docs.map(TrashedCollector.fromDoc).toList());
+
+  /// Undoes [deactivateCollector]: recreates collectors/{uid} from the
+  /// trashed doc's own fields (so a collector who was removed by mistake
+  /// doesn't have to re-register from scratch) and removes it from the
+  /// trash bin. Works because the account's underlying Firebase Auth
+  /// credential was never deleted in the first place — only this doc's
+  /// absence ever locked them out, so recreating it with the same uid is
+  /// enough to pass isCollector() again.
+  Future<void> restoreCollector(String uid, String name) async {
+    final snap = await _trashedCollectors.doc(uid).get();
+    final data = snap.data();
+    if (data is! Map<String, dynamic>) {
+      throw StateError('$name is no longer in the trash bin.');
+    }
+    final restored = Map<String, dynamic>.from(data)
+      ..remove('deactivated_at')
+      ..remove('deactivated_by');
+    await _collectors.doc(uid).set(restored);
+    await _trashedCollectors.doc(uid).delete();
+    await logAudit(AuditAction.restoreCollector, 'Restored $name');
+  }
+
+  /// Permanently removes a trashed collector — the trash bin's own
+  /// "empty forever" action, once an admin is sure the account should
+  /// never come back. Only the trash doc itself is touched; their past
+  /// transactions and audit history (separate collections) are untouched,
+  /// same as a plain [deactivateCollector].
+  Future<void> permanentlyDeleteCollector(String uid, String name) async {
+    await _trashedCollectors.doc(uid).delete();
+    await logAudit(
+        AuditAction.permanentlyDeleteCollector, 'Permanently deleted $name');
+  }
+
   /// Lets the ADMIN reset a locked-out collector's access from the
   /// admin's own device/session — the admin picks a new username and a
   /// passcode for them, and this creates a fresh Firebase Auth account +
@@ -515,14 +604,31 @@ class YosRepository extends ChangeNotifier {
   /// [FirebaseApp] instance (same project, fully isolated auth state) is
   /// the standard workaround: the new account is created and signed into
   /// *that* instance instead, so [FirebaseAuth.instance] (and the
-  /// admin's own session on it) never changes. It's torn down again once
-  /// this finishes, win or lose.
+  /// admin's own session on it) never changes. Signed out of once this
+  /// finishes, win or lose — see below for why it's never `.delete()`d.
   ///
   /// The old account's Firebase Auth credential itself isn't deleted (no
   /// Cloud Functions/Admin SDK access to do that from the client) — only
   /// its collectors/{uid} doc is, which is enough to lock it out
   /// (isCollector() fails without that doc) while its Face ID/audit
   /// history under the old uid stays as a historical record.
+  ///
+  /// The secondary [FirebaseApp] itself is deliberately never torn down
+  /// with `.delete()` afterward, signOut() only — cloud_firestore's native
+  /// Android/iOS SDKs share a single underlying gRPC/worker layer across
+  /// every FirebaseApp in the process, and deleting *any* app instance
+  /// briefly disrupts *all* of them, not just the one being deleted. In
+  /// this app that means every other live Firestore listener at that
+  /// moment — CollectorsScreen's own allCollectors() stream (open the
+  /// whole time an admin is on this exact screen), FeeSettingsService,
+  /// PointsSettingsService, whatever else happens to be listening — can
+  /// throw a stray "[cloud_firestore/unknown] FirebaseApp was deleted"
+  /// right as this finishes, which used to surface as a bogus "Couldn't
+  /// reset access" error even though the reset itself had already
+  /// succeeded. A leftover signed-out secondary FirebaseApp with no
+  /// active listeners costs a few negligible dart/native objects for the
+  /// rest of the process's lifetime — trivial next to breaking every
+  /// other Firestore stream in the app on every single password reset.
   Future<void> resetCollectorPassword({
     required String oldUid,
     required String oldName,
@@ -536,9 +642,9 @@ class YosRepository extends ChangeNotifier {
       name: 'password_reset_${DateTime.now().microsecondsSinceEpoch}',
       options: Firebase.app().options,
     );
+    final secondaryAuth = FirebaseAuth.instanceFor(app: secondaryApp);
+    final secondaryDb = FirebaseFirestore.instanceFor(app: secondaryApp);
     try {
-      final secondaryAuth = FirebaseAuth.instanceFor(app: secondaryApp);
-      final secondaryDb = FirebaseFirestore.instanceFor(app: secondaryApp);
       final cred = await secondaryAuth.createUserWithEmailAndPassword(
         email: emailForUsername(username),
         password: password,
@@ -554,12 +660,12 @@ class YosRepository extends ChangeNotifier {
         'is_admin': false,
         'face_id_enrolled': false,
       });
-      await secondaryAuth.signOut();
     } finally {
-      // Always torn down, whether the reset succeeded or the account
-      // creation above threw — a leaked secondary app instance would
-      // otherwise keep accumulating with every attempt.
-      await secondaryApp.delete();
+      // Best-effort sign-out only — see the doc comment above for why
+      // this deliberately stops short of secondaryApp.delete().
+      try {
+        await secondaryAuth.signOut();
+      } catch (_) {}
     }
 
     // Best-effort: the new account above already works regardless of
@@ -582,6 +688,19 @@ class YosRepository extends ChangeNotifier {
   /// removed collector's face could keep signing back into an account
   /// the app otherwise considers gone, on any device that still carries
   /// the stale profile.
+  ///
+  /// Forces `Source.server` rather than the default cache-or-server
+  /// behavior — this app runs Firestore with unlimited offline
+  /// persistence (see init() above), so a plain `.get()` can silently
+  /// return a *stale locally-cached* copy of this doc instead of ever
+  /// reaching the server, if this device hasn't synced since the account
+  /// was deactivated elsewhere. That let a genuinely-deleted collector's
+  /// face keep signing in and landing on "Welcome back" as long as their
+  /// device's local cache hadn't caught up with the deletion yet. Safe to
+  /// force server-only here specifically: this call only ever runs right
+  /// after [login]'s own signInWithEmailAndPassword just succeeded, which
+  /// already required a real network round-trip a moment ago — there's
+  /// no meaningful offline case to preserve for this one check.
   Future<bool> collectorExists(String uid) async {
     // Same fresh-sign-in permission race as markFaceIdEnrolled /
     // isCurrentUserFaceIdEnrolled above — this read is dispatched right
@@ -591,9 +710,11 @@ class YosRepository extends ChangeNotifier {
     // transiently see the token as not yet recognized server-side.
     // Retry rather than let an unrelated permission-denied blip get
     // mistaken for "this account was removed."
-    for (var attempt = 0; ; attempt++) {
+    for (var attempt = 0;; attempt++) {
       try {
-        final doc = await _collectors.doc(uid).get();
+        final doc = await _collectors
+            .doc(uid)
+            .get(const GetOptions(source: Source.server));
         return doc.exists;
       } on FirebaseException catch (e) {
         if (e.code != 'permission-denied' || attempt >= 2) rethrow;
@@ -675,26 +796,26 @@ class YosRepository extends ChangeNotifier {
     final start = DateTime.now();
     final midnight = DateTime(start.year, start.month, start.day);
     return _tx
-        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(midnight))
+        .where('timestamp',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(midnight))
         .orderBy('timestamp', descending: true)
         .snapshots(includeMetadataChanges: true)
         .map((s) => s.docs.map(ParkingTransaction.fromDoc).toList());
   }
 
-  /// One-time total of yesterday's collections, for the dashboard's "vs
-  /// yesterday" comparison — a plain [Future], not a stream: a day that has
-  /// already ended never changes, so there's nothing to keep listening to.
-  Future<double> yesterdayRevenue() async {
-    final now = DateTime.now();
-    final todayMidnight = DateTime(now.year, now.month, now.day);
-    final yesterdayMidnight = todayMidnight.subtract(const Duration(days: 1));
+  /// One-time fetch of a single past day's transactions — powers the
+  /// dashboard's swipeable collections card (today's page uses the live
+  /// [todayTransactions] stream; every page behind it calls this instead).
+  /// A plain [Future], not a stream: a day that has already ended never
+  /// changes, so there's nothing to keep listening to.
+  Future<List<ParkingTransaction>> transactionsForDate(DateTime date) async {
+    final start = DateTime(date.year, date.month, date.day);
+    final end = start.add(const Duration(days: 1));
     final snap = await _tx
-        .where('timestamp',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(yesterdayMidnight))
-        .where('timestamp', isLessThan: Timestamp.fromDate(todayMidnight))
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('timestamp', isLessThan: Timestamp.fromDate(end))
         .get();
-    return snap.docs.fold<double>(
-        0, (s, d) => s + ((d.data() as Map)['fee'] as num? ?? 0).toDouble());
+    return snap.docs.map(ParkingTransaction.fromDoc).toList();
   }
 
   /// Full history stream, newest first.
@@ -720,6 +841,7 @@ class YosRepository extends ChangeNotifier {
     final log = AuditLog(
       logId: _uuid.v4(),
       actorId: _uid,
+      actorName: currentUserName,
       actionType: actionType,
       description: description,
       timestamp: DateTime.now(),
@@ -736,4 +858,3 @@ class YosRepository extends ChangeNotifier {
       .snapshots(includeMetadataChanges: true)
       .map((s) => s.docs.map(AuditLog.fromDoc).toList());
 }
-

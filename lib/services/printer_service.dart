@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -14,7 +14,12 @@ import 'points_settings_service.dart' show formatPoints;
 /// see ReceiptPreviewDrawer's `_receiptPoints` getter for how it's
 /// computed. Null (no points section at all) for a vehicle that isn't
 /// enrolled.
-typedef ReceiptPoints = ({double earned, double redeemed, double balance});
+typedef ReceiptPoints = ({
+  double earned,
+  double redeemed,
+  double balance,
+  double discountPesos,
+});
 
 /// Bluetooth Classic (SPP) thermal printer service.
 ///
@@ -32,7 +37,14 @@ class PrinterService {
 
   PrinterService._internal();
 
-  PrinterManager? _m; bool get isSupported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android; PrinterManager get _printerManager { if (!isSupported) throw Exception("Bluetooth printing works only on the Android app."); return _m ??= PrinterManager.instance; }
+  PrinterManager? _m;
+  bool get isSupported =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  PrinterManager get _printerManager {
+    if (!isSupported)
+      throw Exception("Bluetooth printing works only on the Android app.");
+    return _m ??= PrinterManager.instance;
+  }
 
   /// Characters per line on a 58 mm roll at Font A.
   static const int lineWidth = 32;
@@ -218,7 +230,16 @@ class PrinterService {
   /// Devices whose name looks like a thermal printer, filtering out
   /// laptops, phones and speakers.
   List<PrinterDevice> get likelyPrinters {
-    const hints = ['pt-2', 'pt2', 'pt_2', 'mtp', 'printer', 'pos', 'rpp', 'bt-'];
+    const hints = [
+      'pt-2',
+      'pt2',
+      'pt_2',
+      'mtp',
+      'printer',
+      'pos',
+      'rpp',
+      'bt-'
+    ];
     return _devices.where((d) {
       final n = d.name.toLowerCase();
       return hints.any(n.contains);
@@ -461,13 +482,20 @@ class PrinterService {
         'Keep this receipt.',
       ];
 
-  /// Points lines for an RFID-enrolled vehicle — redeemed only shown when
-  /// something was actually redeemed this visit, earned and the resulting
-  /// balance always shown. Shared between the printed paper and the
-  /// on-screen preview so they never disagree.
+  /// Points lines for an RFID-enrolled vehicle — the Discount/Points
+  /// redeemed pair only shown when something was actually redeemed this
+  /// visit, earned and the resulting balance always shown. The peso
+  /// Discount line sits right above Points redeemed rather than being
+  /// left implicit in a lower PHP total — a customer seeing only
+  /// "Points redeemed: -0.3" (or the fee line already discounted, with
+  /// no line at all) has no way to check the peso value that actually
+  /// bought. Shared between the printed paper and the on-screen preview
+  /// so they never disagree.
   List<String> _pointsLines(ReceiptPoints points) => [
-        if (points.redeemed > 0)
+        if (points.redeemed > 0) ...[
+          _pair('Discount', '-PHP ${points.discountPesos.toStringAsFixed(2)}'),
           _pair('Points redeemed', '-${formatPoints(points.redeemed)}'),
+        ],
         _pair('Points earned', '+${formatPoints(points.earned)}'),
         _pair('Points balance', formatPoints(points.balance)),
       ];
@@ -602,8 +630,8 @@ class PrinterService {
     if (cached != null) return cached;
 
     final data = await rootBundle.load('assets/icon/logo_receipt.png');
-    final decoded = img.decodeImage(data.buffer.asUint8List(
-        data.offsetInBytes, data.lengthInBytes));
+    final decoded = img.decodeImage(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
     if (decoded == null) return const [];
 
     // 58 mm printers are commonly 384 dots wide (8 dots/mm), but printing
@@ -710,20 +738,19 @@ class PrinterService {
     }
 
     final width = (label.width + name.width).ceil();
-    final height = [label.height, name.height].reduce((a, b) => a > b ? a : b).ceil();
+    final height =
+        [label.height, name.height].reduce((a, b) => a > b ? a : b).ceil();
     if (width <= 0 || height <= 0) return const [];
 
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    canvas.drawRect(
-        Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+    canvas.drawRect(Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
         Paint()..color = const Color(0xFFFFFFFF));
     // Vertically centered within the shared line height, so the smaller
     // name sits comfortably alongside the full-size label.
     label.paint(canvas, Offset(0, (height - label.height) / 2));
     name.paint(canvas, Offset(label.width, (height - name.height) / 2));
-    final uiImage =
-        await recorder.endRecording().toImage(width, height);
+    final uiImage = await recorder.endRecording().toImage(width, height);
     final byteData =
         await uiImage.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (byteData == null) return const [];
@@ -734,7 +761,8 @@ class PrinterService {
     for (var y = 0; y < height; y++) {
       for (var x = 0; x < width; x++) {
         final i = (y * width + x) * 4;
-        final luminance = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
+        final luminance =
+            0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
         if (luminance < 128) {
           raster[y * widthBytes + (x >> 3)] |= 0x80 >> (x & 7);
         }
@@ -755,7 +783,8 @@ class PrinterService {
 
   List<int> _init() => [27, 64]; // ESC @
 
-  List<int> _align(int n) => [27, 97, n]; // ESC a n  (0 left, 1 center, 2 right)
+  List<int> _align(int n) =>
+      [27, 97, n]; // ESC a n  (0 left, 1 center, 2 right)
 
   List<int> _bold(bool on) => [27, 69, on ? 1 : 0]; // ESC E n
 
@@ -764,7 +793,8 @@ class PrinterService {
 
   List<int> _feed(int lines) => List<int>.filled(lines, 10);
 
-  List<int> _cut() => [29, 86, 1]; // GS V 1 (ignored by printers with no cutter)
+  List<int> _cut() =>
+      [29, 86, 1]; // GS V 1 (ignored by printers with no cutter)
 
   /// Encodes a line of text plus a newline. Characters outside Latin-1 are
   /// replaced, since these printers cannot render them.
@@ -789,7 +819,6 @@ class PrinterService {
     if (room <= 0) return label.substring(0, lineWidth);
     return '$label ${value.substring(0, room)}';
   }
-
 
   /// Splits [text] into chunks of at most [width] characters, breaking on
   /// spaces where possible so a word isn't cut mid-word — used only for
@@ -821,14 +850,39 @@ class PrinterService {
   }
 
   static const List<String> _ones = [
-    '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight',
-    'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen',
-    'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen',
+    '',
+    'One',
+    'Two',
+    'Three',
+    'Four',
+    'Five',
+    'Six',
+    'Seven',
+    'Eight',
+    'Nine',
+    'Ten',
+    'Eleven',
+    'Twelve',
+    'Thirteen',
+    'Fourteen',
+    'Fifteen',
+    'Sixteen',
+    'Seventeen',
+    'Eighteen',
+    'Nineteen',
   ];
 
   static const List<String> _tens = [
-    '', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy',
-    'Eighty', 'Ninety',
+    '',
+    '',
+    'Twenty',
+    'Thirty',
+    'Forty',
+    'Fifty',
+    'Sixty',
+    'Seventy',
+    'Eighty',
+    'Ninety',
   ];
 
   /// Spells out a whole-peso amount, e.g. 150.0 -> "One Hundred Fifty Pesos".
@@ -879,4 +933,3 @@ class PrinterException implements Exception {
   @override
   String toString() => message;
 }
-

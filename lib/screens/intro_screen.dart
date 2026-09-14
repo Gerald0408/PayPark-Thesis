@@ -2,6 +2,7 @@
 import 'package:video_player/video_player.dart';
 
 import '../core/theme.dart';
+import '../services/locale_controller.dart';
 import '../widgets/glow_effects.dart';
 import 'login_screen.dart';
 
@@ -14,11 +15,13 @@ class IntroScreen extends StatefulWidget {
 }
 
 class _IntroScreenState extends State<IntroScreen> {
-  static const _phrases = [
-    'Log a vehicle in seconds',
-    'Print receipts instantly',
-    'Works even offline',
-  ];
+  // A getter, not a static const list — t() reads the live language
+  // setting, so this can't be computed once and cached.
+  List<String> get _phrases => [
+        t('Log a vehicle in seconds', 'Mag-log ng sasakyan sa ilang segundo'),
+        t('Print receipts instantly', 'Mag-print ng resibo agad'),
+        t('Works even offline', 'Gumagana kahit walang internet'),
+      ];
   int _i = 0;
 
   // Muted, looping, autoplaying — purely decorative motion behind the
@@ -120,7 +123,7 @@ class _IntroScreenState extends State<IntroScreen> {
                 PopIn(
                   delayMs: 200,
                   child: Text(
-                    'Deliver more,\neasily.',
+                    t('Deliver more,\neasily.', 'Mag-deliver nang mas madali.'),
                     style: text.displayLarge?.copyWith(fontSize: 44),
                   ),
                 ),
@@ -161,8 +164,7 @@ class _IntroScreenState extends State<IntroScreen> {
                   child: SizedBox(
                     width: double.infinity,
                     child: BreathingGlowButton(
-                      label: 'Login',
-                      icon: Icons.face_retouching_natural,
+                      label: t('Login', 'Mag-login'),
                       onPressed: _go,
                     ),
                   ),

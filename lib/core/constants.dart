@@ -39,15 +39,25 @@ const List<Zone> kZones = [
 /// Ordinance reference shown in the fee matrix screen.
 const String kOrdinanceRef = 'Municipal Ordinance No. 2024-07';
 
-/// Fixed loyalty-point redemption tiers, in **pesos**, ascending — a
-/// customer can only redeem toward one of these exact cash amounts,
-/// never a custom/partial one. The points a tier actually costs isn't
-/// fixed here: it's the tier's peso value divided by
-/// PointsSettingsService.pesoPerPoint, the same live, admin-editable
-/// rate points are earned at — redeeming and earning deliberately share
-/// one rate rather than having two to keep in sync. A balance must reach
-/// at least the lowest tier's points-cost to redeem anything at all.
-const List<int> kRedemptionTiers = [50, 100, 150, 200];
+/// Fixed loyalty-point redemption tiers, as a **percentage of whatever
+/// this transaction's fee actually is**, ascending — a customer can only
+/// redeem toward one of these exact percentages, never a custom/partial
+/// one. Percentage-of-fee rather than a fixed peso amount (the previous
+/// [50, 100, 150, 200] pesos) so the same four tiers scale correctly
+/// across every vehicle type's own fee (₱50 tricycle up to ₱200 10-
+/// wheeler) instead of the higher tiers being unreachable for a cheaper
+/// vehicle type.
+///
+/// What a tier costs in points is fixed and flat — see
+/// [redemptionPointsCost] — the same number as the percentage itself
+/// (25% off costs 25 points, 100% off costs 100), regardless of the
+/// vehicle's fee. A redeemed transaction also earns no new points (see
+/// VehicleRegistry.touch), so redeeming is pure spend, never a wash.
+const List<int> kRedemptionTiers = [25, 50, 75, 100];
+
+/// Flat points cost of redeeming [tier] — same number as the percentage
+/// itself (see [kRedemptionTiers]'s doc), not scaled by the vehicle's fee.
+double redemptionPointsCost(int tier) => tier.toDouble();
 
 /// Receipt header lines.
 const List<String> kReceiptHeader = [

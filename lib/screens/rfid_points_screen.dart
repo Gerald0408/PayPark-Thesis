@@ -5,7 +5,8 @@ import '../core/theme.dart';
 import '../models/registered_vehicle.dart';
 import '../services/fee_settings_service.dart';
 import '../services/firestore_service.dart';
-import '../services/points_settings_service.dart';
+import '../services/locale_controller.dart';
+import '../services/points_settings_service.dart' show formatPoints;
 import '../services/registry_service.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/toast.dart';
@@ -33,11 +34,6 @@ class _RfidPointsScreenState extends State<RfidPointsScreen> {
   final _search = TextEditingController();
   final _searchFocus = FocusNode();
   _SortMode _sort = _SortMode.pointsDesc;
-
-  // Same rationale as FeesScreen — captured once so StreamBuilder sees a
-  // stable Stream instance across rebuilds.
-  late final Stream<bool> _isAdminStream =
-      YosRepository.instance.currentUserIsAdmin;
 
   // Same reasoning, for the registry list below — the search box's own
   // setState on every keystroke would otherwise hand its StreamBuilder a
@@ -72,7 +68,9 @@ class _RfidPointsScreenState extends State<RfidPointsScreen> {
     if (!mounted) return;
     _search.clear();
     if (match == null) {
-      Toast.error(context, 'No vehicle enrolled with tag "$tag".');
+      Toast.error(context,
+          t('No vehicle enrolled with tag "$tag".',
+              'Walang sasakyang naka-enroll sa tag na "$tag".'));
       _searchFocus.requestFocus();
       return;
     }
@@ -81,26 +79,21 @@ class _RfidPointsScreenState extends State<RfidPointsScreen> {
     if (mounted) _searchFocus.requestFocus();
   }
 
-  /// Redemption is a fixed-tier system (kRedemptionTiers, in pesos),
-  /// capped by [v]'s own vehicle type fee (see
-  /// ReceiptPreviewDrawer._vehicleFee) — [v] is eligible for the quick
-  /// Redeem button only once both its balance (converted to points at
-  /// the live earn rate) and its type's own fee clear the lowest tier.
-  bool _canQuickRedeem(RegisteredVehicle v) {
-    final fee = FeeSettingsService.instance
-        .feeFor(VehicleType.fromLabel(v.vehicleType));
-    final lowestTierCost =
-        kRedemptionTiers.first / PointsSettingsService.instance.pesoPerPoint;
-    return v.points >= lowestTierCost && fee >= kRedemptionTiers.first;
+  /// Redemption tiers [v]'s balance can afford, ascending — each
+  /// tier's points cost is flat (see [redemptionPointsCost]), not scaled
+  /// by fee. Same shape as ReceiptPreviewDrawer._eligibleTiers.
+  List<int> _eligibleTiers(RegisteredVehicle v) {
+    return kRedemptionTiers
+        .where((t) => redemptionPointsCost(t) <= v.points)
+        .toList();
   }
 
   /// Builds today's transaction for [v] exactly like an RFID tap at
-  /// Vehicle Entry would, then opens the same receipt sheet with the
-  /// highest tier its balance covers already selected (autoRedeemMax) —
-  /// this button only shows once [v] is redemption-eligible at all (see
-  /// _canQuickRedeem), so there's nothing left for the collector to
-  /// configure, just confirm and print.
-  void _redeem(RegisteredVehicle v) {
+  /// Vehicle Entry would, then opens the receipt sheet with [tier] already
+  /// selected — reached from the points/discount popup's per-tier Redeem
+  /// button (see _PointsDiscountDialog), so there's nothing left for the
+  /// collector to configure, just confirm and print.
+  void _redeem(RegisteredVehicle v, int tier) {
     final tx = YosRepository.instance.buildTransaction(
       driverName: v.driverName,
       plateNumber: v.plateNumber,
@@ -114,10 +107,24 @@ class _RfidPointsScreenState extends State<RfidPointsScreen> {
       builder: (sheetContext) => ReceiptPreviewDrawer(
         tx: tx,
         registered: v,
-        autoRedeemMax: true,
+        redeemTier: tier,
         onDone: () => Navigator.of(sheetContext).pop(),
       ),
     );
+  }
+
+  /// Read-only-until-you-tap-Redeem summary of [v]'s points balance and
+  /// which discount tiers it currently qualifies for — reached by tapping
+  /// anywhere on its card except the edit pencil (see the card's own
+  /// onTap). Popping this dialog with an [int] (a chosen tier) chains
+  /// straight into [_redeem]; popping with nothing just closes it.
+  Future<void> _showPointsDialog(RegisteredVehicle v) async {
+    final tier = await showDialog<int>(
+      context: context,
+      builder: (_) =>
+          _PointsDiscountDialog(vehicle: v, eligibleTiers: _eligibleTiers(v)),
+    );
+    if (tier != null) _redeem(v, tier);
   }
 
   List<RegisteredVehicle> _apply(List<RegisteredVehicle> list) {
@@ -147,187 +154,178 @@ class _RfidPointsScreenState extends State<RfidPointsScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const BackButton(),
-        title: const Text('RFID points',
-            style: TextStyle(fontWeight: FontWeight.w800)),
+        title: Text(t('RFID Points', 'RFID Points'),
+            style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: TouchGlowOverlay(
         child: SafeArea(
-          child: StreamBuilder<bool>(
-            stream: _isAdminStream,
-            initialData: false,
-            builder: (context, adminSnap) {
-              final isAdmin = adminSnap.data ?? false;
-              return StreamBuilder<List<RegisteredVehicle>>(
-                stream: _vehicles,
-                builder: (context, snap) {
-                  final list = _apply(snap.data ?? const []);
-                  return ListView(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                    children: [
-                      if (isAdmin) ...[
-                        const _RateEditor(),
-                        const SizedBox(height: 16),
-                      ],
-                      TextField(
-                        controller: _search,
-                        focusNode: _searchFocus,
-                        autofocus: true,
-                        textInputAction: TextInputAction.search,
-                        onSubmitted: _onScan,
-                        decoration: const InputDecoration(
-                          hintText: 'Scan a card, or search plate/driver/tag',
-                          prefixIcon: Icon(Icons.search_rounded),
-                          suffixIcon: Icon(Icons.contactless_rounded),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text(
+          child: StreamBuilder<List<RegisteredVehicle>>(
+            stream: _vehicles,
+            builder: (context, snap) {
+              final list = _apply(snap.data ?? const []);
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                children: [
+                  TextField(
+                    controller: _search,
+                    focusNode: _searchFocus,
+                    autofocus: true,
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: _onScan,
+                    decoration: InputDecoration(
+                      hintText: t('Scan a card, or search plate/driver/tag',
+                          'Mag-scan ng card, o maghanap ng plaka/driver/tag'),
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      suffixIcon: const Icon(Icons.contactless_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                      t(
                           'Plug in the USB card reader and tap a card — it '
-                          'looks up the vehicle automatically. You can still '
-                          'search by hand above.',
-                          style: TextStyle(color: YosColors.sub, fontSize: 11)),
-                      const SizedBox(height: 10),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: DropdownButton<_SortMode>(
-                          value: _sort,
-                          underline: const SizedBox.shrink(),
-                          items: const [
-                            DropdownMenuItem(
-                                value: _SortMode.pointsDesc,
-                                child: Text('Most points')),
-                            DropdownMenuItem(
-                                value: _SortMode.nameAsc,
-                                child: Text('Name A–Z')),
-                          ],
-                          onChanged: (v) =>
-                              setState(() => _sort = v ?? _sort),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (!snap.hasData)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 40),
-                          child: Center(
-                              child: CircularProgressIndicator(
-                                  color: YosColors.accent)),
-                        )
-                      else if (list.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 40),
-                          child: Center(
-                            child: Text(
+                              'looks up the vehicle automatically. You can still '
+                              'search by hand above.',
+                          'I-plug ang USB card reader at i-tap ang card — '
+                              'awtomatiko nitong hahanapin ang sasakyan. '
+                              'Maaari ka pa ring maghanap nang manu-mano sa itaas.'),
+                      style: TextStyle(color: YosColors.sub, fontSize: 11)),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: DropdownButton<_SortMode>(
+                      value: _sort,
+                      underline: const SizedBox.shrink(),
+                      items: [
+                        DropdownMenuItem(
+                            value: _SortMode.pointsDesc,
+                            child: Text(t('Most points', 'Pinakamaraming Points'))),
+                        DropdownMenuItem(
+                            value: _SortMode.nameAsc,
+                            child: Text(t('Name A–Z', 'Pangalan A–Z'))),
+                      ],
+                      onChanged: (v) => setState(() => _sort = v ?? _sort),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (!snap.hasData)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 40),
+                      child: Center(
+                          child: CircularProgressIndicator(
+                              color: YosColors.accent)),
+                    )
+                  else if (list.isEmpty)
+                    Padding(
+                      padding: EdgeInsets.only(top: 40),
+                      child: Center(
+                        child: Text(
+                            t(
                                 'No RFID-enrolled vehicles yet.\nAdd an RFID '
-                                'tag from a vehicle\'s registration to get '
-                                'started.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: YosColors.sub)),
-                          ),
-                        )
-                      else
-                        for (var i = 0; i < list.length; i++)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: PopIn(
-                              delayMs: 40 + i * 40,
-                              child: GlassCard(
-                                onTap: () async {
-                                  await Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                          builder: (_) =>
-                                              RegisterVehicleScreen(
-                                                  existing: list[i])));
-                                },
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
+                                    "tag from a vehicle's registration to get "
+                                    'started.',
+                                'Wala pang RFID-enrolled na sasakyan.\nMagdagdag '
+                                    'ng RFID tag mula sa rehistrasyon ng sasakyan '
+                                    'para magsimula.'),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: YosColors.sub)),
+                      ),
+                    )
+                  else
+                    for (var i = 0; i < list.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: PopIn(
+                          delayMs: 40 + i * 40,
+                          child: GlassCard(
+                            // Shows the points/discount summary now,
+                            // not the edit form — editing moved to its
+                            // own pencil icon below (see _tiles), so a
+                            // plain card tap can't land the collector
+                            // in a full edit screen by accident.
+                            onTap: () => _showPointsDialog(list[i]),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
                                   children: [
-                                    Row(
-                                      children: [
-                                        Container(
-                                          width: 52,
-                                          height: 52,
-                                          decoration: BoxDecoration(
-                                              color: YosColors.mint,
-                                              borderRadius:
-                                                  BorderRadius.circular(16)),
-                                          child: const Icon(Icons.nfc_rounded,
-                                              color: YosColors.ink, size: 26),
-                                        ),
-                                        const SizedBox(width: 14),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(list[i].plateNumber,
-                                                  style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.w800,
-                                                      fontSize: 15,
-                                                      letterSpacing: 1.5)),
-                                              Text(list[i].driverName,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                      color: YosColors.sub,
-                                                      fontSize: 12,
-                                                      fontWeight:
-                                                          FontWeight.w600)),
-                                              Text('Tag ${list[i].rfidTag}',
-                                                  style: const TextStyle(
-                                                      color: YosColors.sub,
-                                                      fontSize: 11)),
-                                            ],
-                                          ),
-                                        ),
-                                        Flexible(
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.end,
-                                            children: [
-                                              FittedBox(
-                                                fit: BoxFit.scaleDown,
-                                                child: Text(
-                                                    formatPoints(
-                                                        list[i].points),
-                                                    maxLines: 1,
-                                                    style: const TextStyle(
-                                                        fontWeight:
-                                                            FontWeight.w900,
-                                                        fontSize: 24,
-                                                        color: YosColors
-                                                            .accentDeep)),
-                                              ),
-                                              const Text('points',
-                                                  style: TextStyle(
-                                                      fontSize: 10,
-                                                      color: YosColors.sub)),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
+                                    Container(
+                                      width: 52,
+                                      height: 52,
+                                      decoration: BoxDecoration(
+                                          color: YosColors.mint,
+                                          borderRadius:
+                                              BorderRadius.circular(16)),
+                                      child: Icon(Icons.nfc_rounded,
+                                          color: YosColors.ink, size: 26),
                                     ),
-                                    if (_canQuickRedeem(list[i])) ...[
-                                      const SizedBox(height: 10),
-                                      FilledButton.tonalIcon(
-                                        onPressed: () => _redeem(list[i]),
-                                        icon: const Icon(
-                                            Icons.redeem_rounded,
-                                            size: 18),
-                                        label: const Text('Redeem points'),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(list[i].plateNumber,
+                                              style: const TextStyle(
+                                                  fontWeight: FontWeight.w800,
+                                                  fontSize: 15,
+                                                  letterSpacing: 1.5)),
+                                          Text(list[i].driverName,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                  color: YosColors.sub,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600)),
+                                          Text('Tag ${list[i].rfidTag}',
+                                              style: TextStyle(
+                                                  color: YosColors.sub,
+                                                  fontSize: 11)),
+                                        ],
                                       ),
-                                    ],
+                                    ),
+                                    // No edit icon here — this card is
+                                    // read-only, points/discounts-only
+                                    // (see the card's own onTap);
+                                    // editing a vehicle now happens
+                                    // from Registered Vehicles instead.
+                                    // Flexible, not a fixed-width
+                                    // trailing column: with nothing
+                                    // else claiming space on this side
+                                    // of the row, the points figure
+                                    // gets the room that icon used to
+                                    // take instead of leaving it blank.
+                                    Flexible(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          FittedBox(
+                                            fit: BoxFit.scaleDown,
+                                            child: Text(
+                                                formatPoints(list[i].points),
+                                                maxLines: 1,
+                                                style: TextStyle(
+                                                    fontWeight: FontWeight.w900,
+                                                    fontSize: 24,
+                                                    color:
+                                                        YosColors.accentDeep)),
+                                          ),
+                                          Text(t('points', 'points'),
+                                              style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: YosColors.sub)),
+                                        ],
+                                      ),
+                                    ),
                                   ],
                                 ),
-                              ),
+                              ],
                             ),
                           ),
-                    ],
-                  );
-                },
+                        ),
+                      ),
+                ],
               );
             },
           ),
@@ -337,114 +335,204 @@ class _RfidPointsScreenState extends State<RfidPointsScreen> {
   }
 }
 
-/// Admin-only editable control for [PointsSettingsService.pesoPerPoint] —
-/// how many pesos of fee earns 1 point every time an RFID tag is scanned
-/// and matched. A plain always-visible input (not a tap-to-open dialog),
-/// so "set the earn rate" is one field and one tap away, right on this
-/// screen. Redemption shares this exact rate too (see kRedemptionTiers'
-/// doc) — changing it here changes both how many points a scan earns
-/// *and* how many points each fixed peso tier costs to redeem.
-class _RateEditor extends StatefulWidget {
-  const _RateEditor();
+/// Points balance + per-tier discount eligibility for one enrolled
+/// vehicle — reached by tapping its card on [RfidPointsScreen] (see
+/// _showPointsDialog). Popping with an [int] (one of kRedemptionTiers)
+/// means the collector tapped that tier's Redeem button; popping with
+/// nothing just closes it without redeeming anything.
+class _PointsDiscountDialog extends StatelessWidget {
+  const _PointsDiscountDialog(
+      {required this.vehicle, required this.eligibleTiers});
 
-  @override
-  State<_RateEditor> createState() => _RateEditorState();
-}
-
-class _RateEditorState extends State<_RateEditor> {
-  late final _rate = TextEditingController(
-      text: PointsSettingsService.instance.pesoPerPoint.toStringAsFixed(0));
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _rate.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    final value = double.tryParse(_rate.text.trim());
-    if (value == null || value <= 0) {
-      Toast.error(context, 'Enter a valid amount.');
-      return;
-    }
-    setState(() => _saving = true);
-    try {
-      await PointsSettingsService.instance.setPesoPerPoint(value);
-      if (mounted) {
-        Toast.success(context,
-            'Points rate updated — ₱${value.toStringAsFixed(0)} now earns 1 point.');
-      }
-    } catch (e) {
-      if (mounted) Toast.error(context, 'Couldn\'t update the rate: $e');
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
+  final RegisteredVehicle vehicle;
+  final List<int> eligibleTiers;
 
   @override
   Widget build(BuildContext context) {
-    return GlassCard(
-      color: YosColors.mint,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
+    final fee = FeeSettingsService.instance
+        .feeFor(VehicleType.fromLabel(vehicle.vehicleType));
+
+    return Dialog(
+      backgroundColor: YosColors.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      // Capped and scrollable rather than left to size itself — the tier
+      // list plus balance card could otherwise overflow a short screen
+      // and spill past the dialog's own bounds into whatever's behind it.
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.8),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.edit_rounded, color: YosColors.ink, size: 20),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text('Points earn rate',
-                    style: TextStyle(
-                        fontWeight: FontWeight.w800, fontSize: 14)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-              'How much fee earns 1 point on a scan — also what redeeming '
-              'a point is worth. Redeem toward fixed ₱'
-              '${kRedemptionTiers.join('/₱')} tiers (min ₱${kRedemptionTiers.first}).',
-              style: const TextStyle(
-                  color: YosColors.ink,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _rate,
-                  enabled: !_saving,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  onSubmitted: (_) => _save(),
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    filled: true,
-                    fillColor: Colors.white,
-                    prefixText: '₱ ',
-                    suffixText: ' = 1 point',
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 6, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(t('Points & discounts', 'Points at Diskwento'),
+                          style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                              color: YosColors.ink)),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: Icon(Icons.close_rounded,
+                          color: YosColors.sub, size: 20),
+                      tooltip: t('Close', 'Isara'),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 10),
-              FilledButton(
-                onPressed: _saving ? null : _save,
-                child: _saving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Text('Save'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${vehicle.plateNumber} · ${vehicle.driverName}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: YosColors.sub,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 10, horizontal: 12),
+                      decoration: BoxDecoration(
+                          color: YosColors.accentSoft,
+                          borderRadius: BorderRadius.circular(14)),
+                      child: Column(
+                        children: [
+                          Text(formatPoints(vehicle.points),
+                              style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w900,
+                                  color: YosColors.accentDeep)),
+                          Text(t('current points balance', 'kasalukuyang balanse ng points'),
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: YosColors.onAccentSoft
+                                      .withValues(alpha: 0.72))),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(t('Discount tiers', 'Mga Tier ng Diskwento'),
+                        style: TextStyle(
+                            color: YosColors.ink,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12)),
+                    const SizedBox(height: 6),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                child: Column(
+                  children: [
+                    for (final tier in kRedemptionTiers)
+                      _TierRow(
+                        tier: tier,
+                        discount: fee * tier / 100,
+                        pointsCost: redemptionPointsCost(tier),
+                        eligible: eligibleTiers.contains(tier),
+                        onRedeem: () => Navigator.of(context).pop(tier),
+                      ),
+                  ],
+                ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TierRow extends StatelessWidget {
+  const _TierRow({
+    required this.tier,
+    required this.discount,
+    required this.pointsCost,
+    required this.eligible,
+    required this.onRedeem,
+  });
+
+  /// Which [kRedemptionTiers] percentage this row is, purely to report
+  /// back via [onRedeem] — not shown on the row itself, which displays
+  /// only the peso amount (see [discount]).
+  final int tier;
+
+  /// Pesos this percentage actually discounts, given this vehicle's own
+  /// fee — shown instead of the raw percentage so the collector reads a
+  /// peso figure directly rather than doing the math themselves.
+  final double discount;
+  final double pointsCost;
+  final bool eligible;
+  final VoidCallback onRedeem;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+          color: eligible ? YosColors.accentSoft : YosColors.surfaceHigh,
+          borderRadius: BorderRadius.circular(12)),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('₱${discount.toStringAsFixed(0)} off',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                        color: YosColors.ink)),
+                // Always the flat threshold itself, not "needs X more" —
+                // a customer looking down this list should see up front
+                // what it takes to unlock any tier, not just how far
+                // short they are of the one they're currently looking at.
+                Text(
+                    t('Requires ${formatPoints(pointsCost)} points',
+                        'Kailangan ng ${formatPoints(pointsCost)} points'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: YosColors.sub)),
+              ],
+            ),
+          ),
+          if (eligible)
+            Material(
+              color: YosColors.accent,
+              borderRadius: BorderRadius.circular(999),
+              child: InkWell(
+                onTap: onRedeem,
+                borderRadius: BorderRadius.circular(999),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  child: Text(t('Redeem', 'I-redeem'),
+                      style: TextStyle(
+                          color: YosColors.onAccent,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12)),
+                ),
+              ),
+            )
+          else
+            Icon(Icons.lock_outline_rounded, size: 16, color: YosColors.sub),
         ],
       ),
     );

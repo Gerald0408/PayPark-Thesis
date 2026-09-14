@@ -44,18 +44,31 @@ class _GlassCardState extends State<GlassCard> {
               setState(() => _pressed = false);
               widget.onTap!();
             },
-      child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutBack, // springy pop
-        child: Container(
-          padding: widget.padding,
-          decoration: BoxDecoration(
-            color: widget.color ?? Colors.white,
-            borderRadius: radius,
-            boxShadow: widget.color == null ? kSoftShadow : const [],
+      // RepaintBoundary: isolates this card's press-scale animation into
+      // its own compositing layer instead of repainting/recompositing
+      // whatever's around it on every tick — see PopIn's matching comment
+      // in glow_effects.dart for why that's what leaves a visible "trace"
+      // behind on the Windows desktop GPU backend.
+      child: RepaintBoundary(
+        child: AnimatedScale(
+          scale: _pressed ? 0.96 : 1.0,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutBack, // springy pop
+          child: Container(
+            padding: widget.padding,
+            decoration: BoxDecoration(
+              color: widget.color ?? YosColors.surface,
+              borderRadius: radius,
+              // Always shadowed, not just when color is unset: a card with
+              // an explicit pastel/accent fill (e.g. _NavTile's
+              // YosColors.surface) can sit close enough in tone to the page
+              // background — especially in the gold theme, where canvas and
+              // card fills are both warm pale colors — that without a
+              // shadow it has no visible edge at all.
+              boxShadow: kSoftShadow,
+            ),
+            child: widget.child,
           ),
-          child: widget.child,
         ),
       ),
     );
@@ -64,11 +77,11 @@ class _GlassCardState extends State<GlassCard> {
 
 /// Little decorative sparkle/star, like the reference UI's accents.
 class Sparkle extends StatelessWidget {
-  const Sparkle({super.key, this.size = 18, this.color = YosColors.ink});
+  const Sparkle({super.key, this.size = 18, this.color});
   final double size;
-  final Color color;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) =>
-      Icon(Icons.auto_awesome, size: size, color: color);
+      Icon(Icons.auto_awesome, size: size, color: color ?? YosColors.ink);
 }

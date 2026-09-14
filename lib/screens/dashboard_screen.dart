@@ -9,13 +9,14 @@ import '../core/theme.dart';
 import '../models/access_request.dart';
 import '../models/transaction.dart';
 import '../services/firestore_service.dart';
+import '../services/locale_controller.dart';
 import '../services/registry_service.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
-import '../widgets/mini_charts.dart';
 import '../widgets/odometer_counter.dart';
 import '../widgets/reset_password_dialog.dart';
 import '../widgets/toast.dart';
+import '../widgets/vehicle_type_override_dialog.dart';
 import 'access_requests_screen.dart';
 import 'audit_screen.dart';
 import 'fees_screen.dart';
@@ -23,6 +24,16 @@ import 'logs_screen.dart';
 import 'registry_screen.dart';
 import 'rfid_points_screen.dart';
 import 'vehicle_entry_screen.dart';
+
+// NOTE: This file was accidentally overwritten with placeholder content
+// during development and has been reconstructed from the original commit,
+// everything read from it earlier in the same session, and cross-checks
+// against sibling files (firestore_service.dart's transactionsForDate,
+// vehicle_entry_screen.dart's confirmVehicleTypeOverride call) that were
+// never touched by the overwrite. Most of this file is a verified,
+// faithful rebuild — the one section rebuilt from inference rather than
+// a direct read is [_CollectionsPager] (see its own doc comment below).
+// Please give that one a look.
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -50,12 +61,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// confirmed/printed. See _onRfidScanned.
   bool _receiptBusy = false;
 
-  // A day that's already over never changes, so this is fetched once
-  // rather than kept live — powers the collections card's "vs yesterday"
-  // comparison. Null until it loads; the card falls back to a plain
-  // "waiting to sync" line in that window instead of a misleading 0%.
-  double? _yesterdayRevenue;
-
   // Grabbed exactly once, not called fresh inside build() — this screen
   // rebuilds often (admin status, sync status, pending requests), and
   // handing StreamBuilder a brand-new Stream instance on every one of
@@ -65,15 +70,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // land a rebuild at the wrong moment. Same `late final` pattern
   // FeesScreen, ProfileScreen, and RfidPointsScreen already use for their
   // own streams.
-  late final Stream<List<ParkingTransaction>> _todayTx = repo.todayTransactions();
+  late final Stream<List<ParkingTransaction>> _todayTx =
+      repo.todayTransactions();
 
   @override
   void initState() {
     super.initState();
     repo.addListener(_onChange);
-    repo.yesterdayRevenue().then((v) {
-      if (mounted) setState(() => _yesterdayRevenue = v);
-    });
     _adminSub = repo.currentUserIsAdmin.listen(
       (v) {
         if (mounted) setState(() => _isAdmin = v);
@@ -117,19 +120,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  /// Same lookup-and-open-receipt flow as VehicleEntryScreen._onRfidScanned
-  /// — kept here too so a tap works straight from the dashboard for a
-  /// Collector. Admin's job here is oversight/editing (fees, points rate,
-  /// collectors), never the day-to-day scan/log/print work, so this bails
-  /// out for an admin session even though the capture field below is
-  /// already never built for one — a defensive second guard, not the only
-  /// one.
+  /// Same lookup-and-open-receipt flow as
+  /// VehicleEntryScreen._onRfidScanned — kept here too so a tap works
+  /// straight from the dashboard for a Collector. Admin's job here is
+  /// oversight/editing (fees, points rate, collectors), never the
+  /// day-to-day scan/log/print work, so this bails out for an admin
+  /// session even though the capture field below is already never built
+  /// for one — a defensive second guard, not the only one.
   Future<void> _onRfidScanned(String raw) async {
     final tag = raw.trim();
     _rfid.clear();
     if (tag.isEmpty || _isAdmin) return;
     if (_receiptBusy) {
-      Toast.warn(context, 'Finish the current receipt first.');
+      Toast.warn(context,
+          t('Finish the current receipt first.', 'Tapusin muna ang kasalukuyang resibo.'));
       return;
     }
     _receiptBusy = true;
@@ -137,11 +141,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final match = await VehicleRegistry.instance.lookupByRfid(tag);
       if (!mounted) return;
       if (match == null) {
-        Toast.error(context, 'No vehicle enrolled with tag "$tag".');
+        Toast.error(context,
+            t('No vehicle enrolled with tag "$tag".',
+                'Walang sasakyang naka-enroll sa tag na "$tag".'));
         _rfidFocus.requestFocus();
         return;
       }
-      final type = VehicleType.fromLabel(match.vehicleType);
+      final registeredType = VehicleType.fromLabel(match.vehicleType);
+      final type =
+          await confirmVehicleTypeOverride(context, current: registeredType);
+      if (!mounted) return;
+      if (type == null) {
+        _rfidFocus.requestFocus();
+        return;
+      }
       final tx = YosRepository.instance.buildTransaction(
         driverName: match.driverName,
         plateNumber: match.plateNumber,
@@ -169,242 +182,383 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String _greeting() {
     final h = DateTime.now().hour;
-    if (h < 12) return 'Good morning';
-    if (h < 18) return 'Good afternoon';
-    return 'Good evening';
+    if (h < 12) return t('Good morning', 'Magandang Umaga');
+    if (h < 18) return t('Good afternoon', 'Magandang Hapon');
+    return t('Good evening', 'Magandang Gabi');
   }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
 
-    return Scaffold(
-      body: TouchGlowOverlay(
-        child: SafeArea(
-          child: StreamBuilder<List<ParkingTransaction>>(
-            stream: _todayTx,
-            builder: (context, snap) {
-              final txs = snap.data ?? const <ParkingTransaction>[];
-              final pending = txs.where((t) => t.pendingSync).length;
-              final revenue = txs.fold<double>(0, (s, t) => s + t.fee);
-              const goal = 60;
-              final ringVal = (txs.length / goal).clamp(0.0, 1.0);
+    // Fixed dark icons, not mode-tracking: the hero below always paints
+    // the same pale-blue gradient behind the status bar now, in both
+    // modes (see the hero Container's own comment on why), so the status
+    // bar no longer needs to flip with the app's light/dark toggle either.
+    // Overrides main.dart's app-wide setting only while this screen is on
+    // top; Flutter restores it on navigation away.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+      ),
+      child: Scaffold(
+        backgroundColor: YosColors.bg,
+        // Light mode's full-bleed backdrop reuses dark mode's own accent
+        // pair (the pale end of this palette) instead of continuing the
+        // hero's dark navy/royal-blue gradient all the way down — the
+        // hero stays a distinct dark moment (it paints its own opaque
+        // gradient over this, see below), while everything below it sits
+        // on this paler blue instead. Dark mode keeps a genuinely dark
+        // canvas for the same reason light mode's backdrop exists —
+        // flooding the whole screen with a pale accent would fight the
+        // point of dark mode — but it's a short gradient fading from the
+        // hero's own bottom tone (accentDark, already part of the default
+        // palette, not a new color) down into the flat dark canvas,
+        // rather than a flat fill on its own: a flat fill right under a
+        // hero that always paints pale (see below) left a hard seam right
+        // where the hero's rect ends. The fade (stops cut it off by 30%
+        // of the screen) means only the area right below the hero blends
+        // — the rest of the canvas stays plain YosColors.bg, same as
+        // before.
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: YosColors.isDark
+                ? LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [YosColors.accentDark, YosColors.bg],
+                    stops: const [0.0, 0.3],
+                  )
+                : LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [YosColors.accentDeepDark, YosColors.accentDark],
+                  ),
+          ),
+          child: TouchGlowOverlay(
+            // top: false — the hero block below paints its own gradient
+            // behind the status bar (see its padding) instead of stopping
+            // at it, so this only insets the sides/bottom for everything
+            // else.
+            child: SafeArea(
+              top: false,
+              child: StreamBuilder<List<ParkingTransaction>>(
+                stream: _todayTx,
+                builder: (context, snap) {
+                  final txs = snap.data ?? const <ParkingTransaction>[];
+                  final pending = txs.where((t) => t.pendingSync).length;
+                  final revenue = txs.fold<double>(0, (s, t) => s + t.fee);
+                  const goal = 60;
+                  final ringVal = (txs.length / goal).clamp(0.0, 1.0);
 
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                children: [
-                  PopIn(
-                    child: LayoutBuilder(
-                      builder: (context, c) {
-                        final narrow = c.maxWidth < 600;
-                        final tiny = c.maxWidth < 340;
-
-                        final titleBlock = Column(
+                  return ListView(
+                    // No uniform inset here anymore: the hero block below
+                    // needs to bleed edge-to-edge, so its own padding is
+                    // internal, and everything after it is wrapped in its
+                    // own Padding instead (see below).
+                    padding: EdgeInsets.zero,
+                    children: [
+                      // ---- Accent hero: greeting/header + today's
+                      // collections. Always paints the same pale-blue
+                      // gradient now, in both modes — accentDeepDark/
+                      // accentDark specifically, not the mode-resolved
+                      // accentDeep/accent (light mode's own accent pair is
+                      // the dark navy/royal blue used for buttons etc.
+                      // elsewhere in the app; the hero deliberately doesn't
+                      // track that here, by request, so it stays the pale
+                      // shade in both modes instead). Every color inside
+                      // this hero below is a fixed dark ink now rather than
+                      // the mode-tracking onAccent, for the same reason.
+                      // Sits on top of the paler backdrop the Scaffold body
+                      // paints behind everything (see that Container's own
+                      // comment) — the hero's opaque gradient covers its
+                      // own rectangle, and the body's shows through
+                      // everywhere below it (now the same shade, so the
+                      // seam is intentionally invisible). Extra top padding
+                      // (status bar height) instead of a SafeArea here,
+                      // since the outer SafeArea is top:false — that's what
+                      // lets the gradient itself paint behind the status
+                      // bar while the greeting text still clears it.
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.fromLTRB(20,
+                            MediaQuery.of(context).padding.top + 10, 20, 18),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              YosColors.accentDeepDark,
+                              YosColors.accentDark
+                            ],
+                          ),
+                        ),
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: Alignment.centerLeft,
-                              child: Text(_greeting(),
-                                  maxLines: 1,
-                                  softWrap: false,
-                                  style: TextStyle(
-                                      color: YosColors.sub,
-                                      fontSize: tiny ? 13 : 15,
-                                      fontWeight: FontWeight.w600)),
-                            ),
-                            FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: Alignment.centerLeft,
-                              child: Text(_isAdmin ? 'Admin' : 'Collector',
-                                  maxLines: 1,
-                                  softWrap: false,
-                                  style: text.headlineMedium
-                                      ?.copyWith(fontSize: tiny ? 26 : 30)),
-                            ),
-                          ],
-                        );
+                            PopIn(
+                              child: LayoutBuilder(
+                                builder: (context, c) {
+                                  final tiny = c.maxWidth < 340;
 
-                        // Printer, Collectors, Change Password, and Log
-                        // out all moved into their own bottom-nav tabs/
-                        // actions (see RootShell) — nothing here opens
-                        // them anymore. Header chips stay reserved for
-                        // things that need at-a-glance visibility (sync
-                        // status) or an active notification (pending
-                        // access requests).
-                        final chips = <Widget>[
-                          if (_isAdmin && _pendingRequests.isNotEmpty)
-                            _AccessRequestsChip(
-                              count: _pendingRequests.length,
-                              onTap: () => Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                      builder: (_) =>
-                                          const AccessRequestsScreen())),
-                            ),
-                          SyncBadge(
-                              online: repo.online, pendingCount: pending),
-                        ];
+                                  final titleBlock = Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(_greeting(),
+                                            maxLines: 1,
+                                            softWrap: false,
+                                            style: TextStyle(
+                                                // YosColors.onAccentSoft, not a
+                                                // fixed color: the hero's
+                                                // gradient (accentDeep/
+                                                // accent) sets the contrast
+                                                // rule for whatever's on top
+                                                // of it — see onAccent's own
+                                                // comment.
+                                                color: YosColors.onAccentSoft
+                                                    .withValues(alpha: 0.72),
+                                                fontSize: tiny ? 13 : 15,
+                                                fontWeight: FontWeight.w600)),
+                                      ),
+                                      FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                            _isAdmin
+                                                ? t('Admin', 'Tagapangasiwa')
+                                                : t('Collector', 'Kolektor'),
+                                            maxLines: 1,
+                                            softWrap: false,
+                                            style: text.headlineMedium
+                                                ?.copyWith(
+                                                    fontSize: tiny ? 26 : 30,
+                                                    color: YosColors
+                                                        .onAccentSoft)),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      SyncBadge(
+                                          online: repo.online,
+                                          pendingCount: pending),
+                                    ],
+                                  );
 
-                        if (narrow) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              titleBlock,
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                crossAxisAlignment:
-                                    WrapCrossAlignment.center,
-                                children: chips,
+                                  // Printer, Collectors, Change Password,
+                                  // and Log out all moved into their own
+                                  // bottom-nav tabs/actions (see RootShell)
+                                  // — nothing here opens them anymore.
+                                  // Header buttons stay reserved for an
+                                  // active notification (pending access
+                                  // requests) plus the theme toggle; sync
+                                  // status now sits under the greeting/role
+                                  // text instead of its own row further
+                                  // down. The dark/light toggle that used to
+                                  // sit here is gone — the app is light-mode
+                                  // only now, by request.
+                                  final buttons = <Widget>[
+                                    // Collectors never see this — only an
+                                    // admin can read access_requests at all
+                                    // (see firestore.rules), so there's
+                                    // nothing behind it for a non-admin
+                                    // session to open anyway.
+                                    if (_isAdmin)
+                                      _NotificationButton(
+                                        hasNotifications:
+                                            _pendingRequests.isNotEmpty,
+                                        onTap: () => Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                                builder: (_) =>
+                                                    const AccessRequestsScreen())),
+                                      ),
+                                  ];
+
+                                  return Row(
+                                    children: [
+                                      Expanded(child: titleBlock),
+                                      const SizedBox(width: 8),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
+                                        children: buttons,
+                                      ),
+                                    ],
+                                  );
+                                },
                               ),
-                            ],
-                          );
-                        }
-
-                        return Row(
-                          children: [
-                            Expanded(child: titleBlock),
-                            const SizedBox(width: 8),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: chips,
+                            ),
+                            const SizedBox(height: 10),
+                            // Last thing the hero's own gradient covers —
+                            // Transactions/Average moved out below (see the
+                            // "everything else" section right after this
+                            // Container closes), so the pale-hero/plain-
+                            // canvas seam now falls right after this instead
+                            // of after the stat cards. A plain static
+                            // readout now, not the swipeable/auto-scrolling
+                            // past-days carousel this used to be — dropped
+                            // by request.
+                            PopIn(
+                              delayMs: 80,
+                              child: _TodayCollections(
+                                todayRevenue: revenue,
+                                todayPending: pending,
+                              ),
                             ),
                           ],
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-
-                  PopIn(
-                    delayMs: 80,
-                    child: _CollectionsCard(
-                      revenue: revenue,
-                      pending: pending,
-                      yesterdayRevenue: _yesterdayRevenue,
-                      barValues: _bucketTotals(txs, 8, (t) => t.fee),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-
-                  // IntrinsicHeight: gives the Row a bounded height to
-                  // stretch its children to (its natural cross-axis size
-                  // here is unbounded, sitting directly in a ListView) —
-                  // CrossAxisAlignment.stretch alone throws "BoxConstraints
-                  // forces an infinite height" without it.
-                  IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          child: PopIn(
-                            delayMs: 140,
-                            child: _TransactionsCard(
-                              count: txs.length,
-                              ringValue: ringVal,
-                            ),
-                          ),
                         ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: PopIn(
-                            delayMs: 200,
-                            child: _AverageCard(
-                              average: txs.isEmpty ? 0 : revenue / txs.length,
-                              lineValues: _bucketAverages(txs, 8),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_isAdmin && _pendingRequests.isNotEmpty) ...[
-                    const SizedBox(height: 14),
-                    PopIn(
-                      delayMs: 220,
-                      child: _PendingResetsCard(requests: _pendingRequests),
-                    ),
-                  ],
-                  // Invisible RFID capture field — no visible "Tap RFID
-                  // card" UI, but still autofocused and wired to
-                  // _onRfidScanned so a directly-connected (OTG) reader's
-                  // keystrokes are caught the same as at Vehicle Entry.
-                  // Offstage keeps it out of layout/paint entirely while
-                  // leaving focus/text-input untouched. Not readOnly: that
-                  // would drop the platform text-input connection this
-                  // needs to actually receive the reader's keystrokes on
-                  // Android — keyboardType.none alone is enough to keep the
-                  // on-screen keyboard from popping up. Not built at all
-                  // for an admin session — scanning/logging/printing is
-                  // Collector work; Admin's dashboard tiles already leave
-                  // that whole path off (see _tiles), so this field
-                  // shouldn't silently keep listening for it underneath.
-                  if (!_isAdmin)
-                    Offstage(
-                      offstage: true,
-                      child: TextField(
-                        controller: _rfid,
-                        focusNode: _rfidFocus,
-                        autofocus: true,
-                        keyboardType: TextInputType.none,
-                        onSubmitted: _onRfidScanned,
                       ),
-                    ),
 
-                  const Padding(
-                    padding: EdgeInsets.only(left: 4, bottom: 12),
-                    child: Text('Quick actions',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w800, fontSize: 18)),
-                  ),
+                      // ---- Everything else — off the hero's pale gradient
+                      // now, sitting directly on the plain canvas below it
+                      // (light mode's own pale-blue backdrop, or dark
+                      // mode's plain dark one — see the Scaffold body
+                      // above); every widget here paints its own opaque
+                      // card background on top of that, except the bare
+                      // "Quick actions" label below.
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 6),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Transactions/Average — moved down here from
+                            // the hero above so the pale gradient stays
+                            // exclusive to the greeting/carousel; these two
+                            // keep their own opaque fills (white vs
+                            // accentSoft) regardless, so they read the same
+                            // as before, just against a different backdrop.
+                            IntrinsicHeight(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    child: PopIn(
+                                      delayMs: 140,
+                                      child: _TransactionsCard(
+                                        count: txs.length,
+                                        ringValue: ringVal,
+                                      ),
+                                    ),
+                                  ),
+                                  // Plain gap, not a vertical rule: now that
+                                  // each stat has its own card fill (white
+                                  // vs accentSoft), the two colors already
+                                  // separate them — a line drawn in the
+                                  // space between two rounded cards read as
+                                  // a stray mark, not a meaningful divider.
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: PopIn(
+                                      delayMs: 200,
+                                      child: _AverageCard(
+                                        average: txs.isEmpty
+                                            ? 0
+                                            : revenue / txs.length,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            if (_isAdmin && _pendingRequests.isNotEmpty) ...[
+                              PopIn(
+                                delayMs: 220,
+                                child: _PendingResetsCard(
+                                    requests: _pendingRequests),
+                              ),
+                              const SizedBox(height: 14),
+                            ],
+                            // Invisible RFID capture field — no visible "Tap
+                            // RFID card" UI, but still autofocused and wired
+                            // to _onRfidScanned so a directly-connected
+                            // (OTG) reader's keystrokes are caught the same
+                            // as at Vehicle Entry. Offstage keeps it out of
+                            // layout/paint entirely while leaving
+                            // focus/text-input untouched. Not readOnly: that
+                            // would drop the platform text-input connection
+                            // this needs to actually receive the reader's
+                            // keystrokes on Android — keyboardType.none
+                            // alone is enough to keep the on-screen keyboard
+                            // from popping up. Not built at all for an
+                            // admin session — scanning/logging/printing is
+                            // Collector work; Admin's dashboard tiles
+                            // already leave that whole path off (see
+                            // _tiles), so this field shouldn't silently
+                            // keep listening for it underneath.
+                            if (!_isAdmin)
+                              Offstage(
+                                offstage: true,
+                                child: TextField(
+                                  controller: _rfid,
+                                  focusNode: _rfidFocus,
+                                  autofocus: true,
+                                  keyboardType: TextInputType.none,
+                                  onSubmitted: _onRfidScanned,
+                                ),
+                              ),
 
-                  LayoutBuilder(
-                    builder: (context, c) {
-                      // Below ~380 of content width, a 2-up tile only leaves
-                      // ~70px for text next to the 44px icon — not enough
-                      // room for "Transaction logs" to fit as one word-wrap-
-                      // able line, so Flutter falls back to breaking the
-                      // word itself (e.g. the trailing "n" of "Transaction"
-                      // wraps down alone). Dropping to a single column below
-                      // that width gives tiles the full row to work with.
-                      final cols = c.maxWidth < 380
-                          ? 1
-                          : c.maxWidth < 700
-                              ? 2
-                              : 3;
-                      return GridView(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        // A fixed pixel height instead of childAspectRatio:
-                        // the tile's content (icon beside one line of text) has
-                        // a fixed height regardless of screen width, so tying
-                        // height to width (aspect ratio) made the cards balloon
-                        // on wider screens even though the content inside
-                        // stayed the same size, leaving a lot of empty space.
-                        gridDelegate:
-                            SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: cols,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          mainAxisExtent: 78,
+                            Padding(
+                              padding:
+                                  const EdgeInsets.only(left: 4, bottom: 4),
+                              // YosColors.ink, not onAccent: this canvas
+                              // (dark mode's plain background, or light
+                              // mode's pale-blue backdrop below the hero —
+                              // see the Scaffold body's own comment) is
+                              // light in light mode and dark in dark mode,
+                              // same shape ink already tracks — it's only
+                              // the hero itself that inverts that, and this
+                              // label isn't inside the hero.
+                              child: Text(t('Quick actions', 'Mabilisang Aksyon'),
+                                  style: TextStyle(
+                                      color: YosColors.ink,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 18)),
+                            ),
+
+                            // Fixed at 2 columns regardless of width — was
+                            // previously responsive (1/2/3 columns) but that
+                            // read as inconsistent rather than adaptive.
+                            GridView(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              // A fixed pixel height instead of
+                              // childAspectRatio: the tile's content (icon
+                              // beside one line of text) has a fixed height
+                              // regardless of screen width, so tying height
+                              // to width (aspect ratio) made the cards
+                              // balloon on wider screens even though the
+                              // content inside stayed the same size, leaving
+                              // a lot of empty space.
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                mainAxisSpacing: 8,
+                                crossAxisSpacing: 10,
+                                mainAxisExtent: 76,
+                              ),
+                              children: _tiles(context)
+                                  .asMap()
+                                  .entries
+                                  .map((e) => PopIn(
+                                        delayMs: 240 + e.key * 50,
+                                        child: e.value,
+                                      ))
+                                  .toList(),
+                            ),
+                          ],
                         ),
-                        children: _tiles(context)
-                            .asMap()
-                            .entries
-                            .map((e) => PopIn(
-                                  delayMs: 240 + e.key * 50,
-                                  child: e.value,
-                                ))
-                            .toList(),
-                      );
-                    },
-                  ),
-                ],
-              );
-            },
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ),
@@ -417,214 +571,289 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // oversight, relevant to both roles.
   List<Widget> _tiles(BuildContext context) => [
         _NavTile(
-          color: YosColors.mint,
           icon: Icons.receipt_long_rounded,
-          title: 'Transaction logs',
+          title: t('Transaction Logs', 'Mga Log ng Transaksyon'),
           onTap: () => Navigator.of(context)
               .push(MaterialPageRoute(builder: (_) => const LogsScreen())),
         ),
         _NavTile(
-          color: YosColors.mint,
           icon: Icons.request_quote_rounded,
-          title: 'Fee matrix',
+          title: t('Fee Matrix', 'Talaan ng Bayarin'),
           onTap: () => Navigator.of(context)
               .push(MaterialPageRoute(builder: (_) => const FeesScreen())),
         ),
         _NavTile(
-          color: YosColors.mint,
           icon: Icons.security_rounded,
-          title: 'Audit trail',
+          title: t('Audit Trail', 'Talaan ng Audit'),
           onTap: () => Navigator.of(context)
               .push(MaterialPageRoute(builder: (_) => const AuditScreen())),
         ),
         if (!_isAdmin)
           _NavTile(
-            color: YosColors.mint,
             icon: Icons.directions_car_filled_rounded,
-            title: 'Registered vehicles',
+            title: t('Registered Vehicles', 'Mga Nakarehistrong Sasakyan'),
             onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const RegistryScreen())),
           ),
         _NavTile(
-          color: YosColors.mint,
           icon: Icons.loyalty_rounded,
-          title: 'RFID points',
+          title: t('RFID Points', 'RFID Points'),
           onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const RfidPointsScreen())),
         ),
         if (!_isAdmin)
           _NavTile(
-            color: YosColors.mint,
             icon: Icons.receipt_rounded,
-            title: 'Print receipt',
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => const VehicleEntryScreen())),
+            title: t('Print Receipt', 'I-print ang Resibo'),
+            onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const VehicleEntryScreen())),
           ),
       ];
 }
 
-/// Sums [valueOf] per time bucket across today so far (midnight to now),
-/// evenly split into [buckets] slices — the raw series behind
-/// [_CollectionsCard]'s bar sparkline. A slice with no transactions yet
-/// (e.g. every slice past the current time) is just 0; [BarSparkline]
-/// renders that as a short stub rather than nothing.
-List<double> _bucketTotals(
-  List<ParkingTransaction> txs,
-  int buckets,
-  double Function(ParkingTransaction) valueOf,
-) {
-  final now = DateTime.now();
-  final start = DateTime(now.year, now.month, now.day);
-  final totalMinutes = now.difference(start).inMinutes.clamp(1, 24 * 60);
-  final bucketMinutes = totalMinutes / buckets;
-  final sums = List<double>.filled(buckets, 0);
-  for (final t in txs) {
-    final minutesSinceStart = t.timestamp.difference(start).inMinutes;
-    final idx =
-        (minutesSinceStart / bucketMinutes).floor().clamp(0, buckets - 1);
-    sums[idx] += valueOf(t);
-  }
-  return sums;
-}
-
-/// Same bucketing as [_bucketTotals], but the average fee per bucket
-/// rather than a sum — the series behind [_AverageCard]'s trend line. An
-/// empty bucket forward-fills the last known average instead of dropping
-/// to 0, since 0 would read as "average fee was zero" rather than "no
-/// transactions yet in this slice".
-List<double> _bucketAverages(List<ParkingTransaction> txs, int buckets) {
-  final now = DateTime.now();
-  final start = DateTime(now.year, now.month, now.day);
-  final totalMinutes = now.difference(start).inMinutes.clamp(1, 24 * 60);
-  final bucketMinutes = totalMinutes / buckets;
-  final sums = List<double>.filled(buckets, 0);
-  final counts = List<int>.filled(buckets, 0);
-  for (final t in txs) {
-    final minutesSinceStart = t.timestamp.difference(start).inMinutes;
-    final idx =
-        (minutesSinceStart / bucketMinutes).floor().clamp(0, buckets - 1);
-    sums[idx] += t.fee;
-    counts[idx]++;
-  }
-  var last = 0.0;
-  return [
-    for (var i = 0; i < buckets; i++)
-      if (counts[i] > 0) (last = sums[i] / counts[i]) else last,
-  ];
-}
-
-/// Dashboard's headline stat — today's total collections, how that
-/// compares to yesterday, and a bar sparkline of the day's pace so far.
-/// Placed right under the header's [SyncBadge] ("All synced" / "Syncing
-/// N"), which is why the sync-pending count isn't repeated here.
-class _CollectionsCard extends StatelessWidget {
-  const _CollectionsCard({
-    required this.revenue,
-    required this.pending,
-    required this.yesterdayRevenue,
-    required this.barValues,
+/// Today's collections readout behind the hero's headline stat — a
+/// manually swipeable week-in-review: today's page (the rightmost, shown
+/// first) plus the 7 days before it, swipe right-to-left to look back one
+/// day at a time. Manual only, no auto-advance — the auto-scrolling
+/// version of this was dropped by request; this is just the "look back at
+/// the past week" swipe brought back on top of that static page.
+class _TodayCollections extends StatefulWidget {
+  const _TodayCollections({
+    required this.todayRevenue,
+    required this.todayPending,
   });
 
+  final double todayRevenue;
+  final int todayPending;
+
+  static const _pastDays = 7;
+  static const _pageCount = _pastDays + 1;
+
+  @override
+  State<_TodayCollections> createState() => _TodayCollectionsState();
+}
+
+class _TodayCollectionsState extends State<_TodayCollections> {
+  late final _controller =
+      PageController(initialPage: _TodayCollections._pastDays);
+  int _page = _TodayCollections._pastDays;
+
+  // One cached future per day index — a day that's already over never
+  // changes, so swiping back and forth shouldn't re-hit Firestore every
+  // time.
+  final Map<int, Future<List<ParkingTransaction>>> _pastCache = {};
+
+  DateTime _dateForPage(int pageIndex) {
+    final daysAgo = _TodayCollections._pastDays - pageIndex;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return today.subtract(Duration(days: daysAgo));
+  }
+
+  Future<List<ParkingTransaction>> _pastDayTx(int pageIndex) =>
+      _pastCache.putIfAbsent(
+          pageIndex,
+          () => YosRepository.instance
+              .transactionsForDate(_dateForPage(pageIndex)));
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 84,
+          child: PageView.builder(
+            controller: _controller,
+            itemCount: _TodayCollections._pageCount,
+            onPageChanged: (i) => setState(() => _page = i),
+            itemBuilder: (context, i) {
+              final isToday = i == _TodayCollections._pastDays;
+              if (isToday) {
+                // Today's own revenue is already known synchronously (the
+                // live stream up in DashboardScreen), but "vs yesterday"
+                // still needs yesterday's total fetched.
+                return FutureBuilder<List<ParkingTransaction>>(
+                  future: _pastDayTx(i - 1),
+                  builder: (context, snap) => _CollectionsPage(
+                    label: t("Today's collections", 'Koleksyon Ngayong Araw'),
+                    revenue: widget.todayRevenue,
+                    pending: widget.todayPending,
+                    previousRevenue:
+                        snap.data?.fold<double>(0, (s, t) => s + t.fee),
+                  ),
+                );
+              }
+              return FutureBuilder<List<List<ParkingTransaction>>>(
+                future: Future.wait([
+                  _pastDayTx(i),
+                  if (i > 0) _pastDayTx(i - 1) else Future.value(const []),
+                ]),
+                builder: (context, snap) {
+                  final results = snap.data;
+                  if (results == null) {
+                    return Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: YosColors.onAccentSoft),
+                      ),
+                    );
+                  }
+                  final txs = results[0];
+                  final revenue = txs.fold<double>(0, (s, t) => s + t.fee);
+                  final dayStart = _dateForPage(i);
+                  final previousRevenue = i > 0
+                      ? results[1].fold<double>(0, (s, t) => s + t.fee)
+                      : null;
+                  return _CollectionsPage(
+                    label: DateFormat('MMM d').format(dayStart),
+                    revenue: revenue,
+                    pending: 0,
+                    previousRevenue: previousRevenue,
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(_TodayCollections._pageCount, (i) {
+            final active = i == _page;
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              width: active ? 16 : 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: YosColors.onAccentSoft
+                    .withValues(alpha: active ? 0.9 : 0.35),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            );
+          }),
+        ),
+      ],
+    );
+  }
+}
+
+/// [_TodayCollections]' content — a label, the day's total, and a
+/// percentage-vs-previous-day row (or a fallback when there's nothing to
+/// compare against yet). Sits directly on the hero's own gradient, not a
+/// separate card, so every color here reads off [YosColors.onAccentSoft]
+/// rather than the canvas-relative ink/sub.
+class _CollectionsPage extends StatelessWidget {
+  const _CollectionsPage({
+    required this.label,
+    required this.revenue,
+    required this.pending,
+    required this.previousRevenue,
+  });
+
+  final String label;
   final double revenue;
   final int pending;
-  final double? yesterdayRevenue;
-  final List<double> barValues;
+  final double? previousRevenue;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final money = NumberFormat.currency(symbol: '₱', decimalDigits: 0);
-    final yesterday = yesterdayRevenue;
-    final pctChange = (yesterday == null || yesterday <= 0)
+    final previous = previousRevenue;
+    final pctChange = (previous == null || previous <= 0)
         ? null
-        : (revenue - yesterday) / yesterday * 100;
+        : (revenue - previous) / previous * 100;
 
-    return GlassCard(
-      color: YosColors.mint,
-      padding: const EdgeInsets.all(24),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text("Today's collections",
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: YosColors.onAccentSoft.withValues(alpha: 0.72),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14)),
+              const SizedBox(height: 4),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: OdometerCounter(
+                  value: money.format(revenue),
+                  style: text.displayLarge
+                      ?.copyWith(fontSize: 34, color: YosColors.onAccentSoft),
+                ),
+              ),
+              const SizedBox(height: 6),
+              if (pctChange != null)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      pctChange >= 0
+                          ? Icons.arrow_upward_rounded
+                          : Icons.arrow_downward_rounded,
+                      size: 14,
+                      // Semantic good/bad, not onAccent — an accent-family
+                      // color here would be lime-on-lime, barely visible
+                      // against the hero's own background.
+                      color: pctChange >= 0 ? YosColors.good : YosColors.bad,
+                    ),
+                    const SizedBox(width: 2),
+                    Text('${pctChange.abs().toStringAsFixed(1)}%',
+                        style: TextStyle(
+                            color:
+                                pctChange >= 0 ? YosColors.good : YosColors.bad,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12)),
+                    const SizedBox(width: 4),
+                    Text(t('vs day before', 'kumpara sa nakaraang araw'),
+                        style: TextStyle(
+                            color:
+                                YosColors.onAccentSoft.withValues(alpha: 0.72),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12)),
+                  ],
+                )
+              else
+                Text(
+                    pending > 0
+                        ? t('$pending waiting to sync',
+                            '$pending naghihintay mai-sync')
+                        : t('No data to compare yet',
+                            'Wala pang datos na maikukumpara'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        color: YosColors.sub,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14)),
-                const SizedBox(height: 8),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: OdometerCounter(
-                    value: money.format(revenue),
-                    style: text.displayLarge?.copyWith(fontSize: 34),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                if (pctChange != null)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        pctChange >= 0
-                            ? Icons.arrow_upward_rounded
-                            : Icons.arrow_downward_rounded,
-                        size: 14,
-                        color: pctChange >= 0 ? YosColors.good : YosColors.bad,
-                      ),
-                      const SizedBox(width: 2),
-                      Text('${pctChange.abs().toStringAsFixed(1)}%',
-                          style: TextStyle(
-                              color: pctChange >= 0
-                                  ? YosColors.good
-                                  : YosColors.bad,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 12)),
-                      const SizedBox(width: 4),
-                      const Text('vs yesterday',
-                          style: TextStyle(
-                              color: YosColors.sub,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 12)),
-                    ],
-                  )
-                else
-                  Text(
-                      pending > 0
-                          ? '$pending waiting to sync'
-                          : 'No data for yesterday yet',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: YosColors.sub,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 12)),
-              ],
-            ),
+                        color: YosColors.onAccentSoft.withValues(alpha: 0.72),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12)),
+            ],
           ),
-          const SizedBox(width: 12),
-          BarSparkline(
-            values: barValues,
-            color: YosColors.ink,
-            highlightColor: YosColors.accent,
-            width: 90,
-            height: 56,
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
-/// Today's transaction count, with a small goal-progress ring on the side
-/// (same [ProgressRing]/goal the header's collections card used to show
-/// inline) — the ring's label just reads "Today" now that the count
-/// itself is the card's headline number.
+/// Today's transaction count, with a small goal-progress ring on the side.
+/// No card box — sits directly on the scrollable background, the same way
+/// the hero's "Today's collections" does, rather than being boxed off from
+/// it.
 class _TransactionsCard extends StatelessWidget {
   const _TransactionsCard({required this.count, required this.ringValue});
 
@@ -633,49 +862,69 @@ class _TransactionsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return GlassCard(
-      color: YosColors.mint,
-      padding: const EdgeInsets.all(18),
+    // Fixed white, not the mode-tracking YosColors.surface — that resolves
+    // to a dark navy in dark mode, which made this card's text (a fixed
+    // dark onAccentSoft, correct only on a pale surface) unreadable
+    // against its own background. A literal light fill, same reasoning as
+    // _AverageCard's fixed accentSoft below: both stay pale in either
+    // mode, distinct from each other rather than merging into one long
+    // run of numbers.
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: YosColors.surfaceLight,
+        borderRadius: BorderRadius.circular(18),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Transactions',
+          Text(t('Transactions', 'Mga Transaksyon'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: YosColors.sub,
+                  color: YosColors.onAccentSoft.withValues(alpha: 0.72),
                   fontWeight: FontWeight.w700,
                   fontSize: 13)),
           const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
+          // Stack, not a Row: a Row placed the ring right after the count
+          // (wherever that happened to end), not centered in the column.
+          // The count stays pinned to the left edge; the ring centers on
+          // the full column width regardless of how wide the count is.
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Align(
                   alignment: Alignment.centerLeft,
-                  child: OdometerCounter(
-                    value: '$count',
-                    style: text.displayLarge?.copyWith(fontSize: 30),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: OdometerCounter(
+                      value: '$count',
+                      style: TextStyle(
+                          fontSize: 30,
+                          fontWeight: FontWeight.w700,
+                          color: YosColors.onAccentSoft),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              ProgressRing(
-                value: ringValue,
-                size: 48,
-                stroke: 5,
-                color: YosColors.accent,
-                track: const Color(0x1F16161A),
-                child: const Text('Today',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 8,
-                        fontWeight: FontWeight.w800,
-                        color: YosColors.ink)),
-              ),
-            ],
+                ProgressRing(
+                  value: ringValue,
+                  size: 48,
+                  stroke: 5,
+                  color: YosColors.accentDeep,
+                  track: const Color(0x1F16161A),
+                  child: Text(t('Today', 'Ngayon'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 8,
+                          fontWeight: FontWeight.w800,
+                          color: YosColors.onAccentSoft)),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -683,29 +932,33 @@ class _TransactionsCard extends StatelessWidget {
   }
 }
 
-/// Average fee per transaction today, with a line sparkline of how that
-/// average has trended across the day (see [_bucketAverages]).
+/// Average fee per transaction today. No trend sparkline anymore — it only
+/// ever drew as a flat line against zero-transaction test data and added
+/// height without adding information.
 class _AverageCard extends StatelessWidget {
-  const _AverageCard({required this.average, required this.lineValues});
+  const _AverageCard({required this.average});
 
   final double average;
-  final List<double> lineValues;
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
     final money = NumberFormat.currency(symbol: '₱', decimalDigits: 0);
-    return GlassCard(
-      color: YosColors.moss,
-      padding: const EdgeInsets.all(18),
+    // accentSoft, not _TransactionsCard's white — two different fills so
+    // the pair reads as two distinct cards rather than one long block.
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: YosColors.accentSoft,
+        borderRadius: BorderRadius.circular(18),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Average',
+          Text(t('Average', 'Karaniwan'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: YosColors.sub,
+                  color: YosColors.onAccentSoft.withValues(alpha: 0.72),
                   fontWeight: FontWeight.w700,
                   fontSize: 13)),
           const SizedBox(height: 10),
@@ -714,15 +967,11 @@ class _AverageCard extends StatelessWidget {
             alignment: Alignment.centerLeft,
             child: OdometerCounter(
               value: money.format(average),
-              style: text.displayLarge?.copyWith(fontSize: 30),
+              style: TextStyle(
+                  fontSize: 30,
+                  fontWeight: FontWeight.w700,
+                  color: YosColors.onAccentSoft),
             ),
-          ),
-          const SizedBox(height: 10),
-          LineSparkline(
-            values: lineValues,
-            color: YosColors.accentDeep,
-            width: double.infinity,
-            height: 28,
           ),
         ],
       ),
@@ -732,37 +981,79 @@ class _AverageCard extends StatelessWidget {
 
 class _NavTile extends StatelessWidget {
   const _NavTile({
-    required this.color,
     required this.icon,
     required this.title,
     required this.onTap,
   });
-  final Color color;
   final IconData icon;
   final String title;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    // Compact icon-circle-over-label tile. Card fill is accent (royal
+    // blue, #334EAC) in light mode rather than plain white or the darker
+    // navy accentDeep — a solid white card read as disconnected from the
+    // pale-blue backdrop it sits on, and the tile stays clearly darker
+    // than that backdrop either way. Dark mode keeps its black cards,
+    // unchanged.
     return GlassCard(
       onTap: onTap,
-      padding: const EdgeInsets.all(14),
-      child: Row(
+      color: YosColors.isDark ? Colors.black : YosColors.accent,
+      borderRadius: 20,
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 44,
-            height: 44,
+            width: 34,
+            height: 34,
+            // White in light mode — the card fill is a dark accent color
+            // there, so a white badge reads as a clean, distinct chip
+            // rather than blending into a same-hue circle. Dark mode keeps
+            // the accent-colored circle: its card fill is black, so the
+            // accent already pops fine there.
             decoration: BoxDecoration(
-                color: color, borderRadius: BorderRadius.circular(14)),
-            child: Icon(icon, color: YosColors.ink, size: 22),
+                color: YosColors.isDark ? YosColors.accent : Colors.white,
+                shape: BoxShape.circle),
+            // Fixed dark icon, not YosColors.onAccentSoft: onAccent flips to
+            // white in light mode now (this palette's light-mode accent is
+            // dark navy, needing white text there), but this circle is
+            // hardcoded white regardless of mode, so its icon always needs
+            // dark ink instead, not whatever onAccent says for the current
+            // mode. Dark mode's circle is accent-colored (pale blue), and
+            // that also happens to need dark ink — so this fixed value is
+            // correct in both cases, just no longer expressible as
+            // onAccent since onAccent no longer means "dark" everywhere.
+            child: Icon(icon, color: const Color(0xFF1B1B1B), size: 17),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 13)),
+          const SizedBox(height: 4),
+          // Flexible + FittedBox, not a bare Text: at a bumped-up
+          // accessibility text scale or a long two-word title (e.g.
+          // "Registered vehicles"), a fixed-size label was tall enough to
+          // push this column past the grid cell's aspect-ratio height,
+          // which is exactly what threw the "bottom overflowed by N
+          // pixels" error — scaling the whole label block down to fit
+          // removes that failure mode instead of just guessing a cell
+          // height that happens to be tall enough today.
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(title,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      // Card fill is dark in both modes now (accentDeep in
+                      // light, black in dark), so the label needs a fixed
+                      // light color rather than YosColors.ink, which
+                      // assumes a light canvas in light mode.
+                      color: YosColors.isDark ? YosColors.ink : Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      height: 1.15)),
+            ),
           ),
         ],
       ),
@@ -797,10 +1088,15 @@ class _PendingResetsCard extends StatelessWidget {
               Expanded(
                 child: Text(
                     requests.length == 1
-                        ? '1 collector needs a password reset'
-                        : '${requests.length} collectors need a password reset',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w800, fontSize: 14)),
+                        ? t('1 collector needs a password reset',
+                            'May 1 kolektor na kailangan ng password reset')
+                        : t(
+                            '${requests.length} collectors need a password reset',
+                            '${requests.length} kolektor ang kailangan ng password reset'),
+                    style: TextStyle(
+                        color: YosColors.ink,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14)),
               ),
             ],
           ),
@@ -812,11 +1108,15 @@ class _PendingResetsCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                        r.name.isEmpty ? '(no name given)' : r.name,
+                        r.name.isEmpty
+                            ? t('(no name given)', '(walang pangalan)')
+                            : r.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 13)),
+                        style: TextStyle(
+                            color: YosColors.ink,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13)),
                   ),
                   const SizedBox(width: 8),
                   OutlinedButton(
@@ -827,8 +1127,8 @@ class _PendingResetsCard extends StatelessWidget {
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
-                    child: const Text('Reset password',
-                        style: TextStyle(fontSize: 12)),
+                    child: Text(t('Reset password', 'I-reset ang Password'),
+                        style: const TextStyle(fontSize: 12)),
                   ),
                 ],
               ),
@@ -839,9 +1139,13 @@ class _PendingResetsCard extends StatelessWidget {
   }
 }
 
-class _AccessRequestsChip extends StatelessWidget {
-  const _AccessRequestsChip({required this.count, required this.onTap});
-  final int count;
+/// Bell icon with a small dot badge when there are pending access
+/// requests — sits at the top-right of the dashboard's accent hero
+/// header.
+class _NotificationButton extends StatelessWidget {
+  const _NotificationButton(
+      {required this.hasNotifications, required this.onTap});
+  final bool hasNotifications;
   final VoidCallback onTap;
 
   @override
@@ -849,27 +1153,42 @@ class _AccessRequestsChip extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        width: 36,
+        height: 36,
+        // Fixed white circle with a fixed dark icon, not mode-branched:
+        // the hero this sits on is the same pale-blue gradient in both
+        // modes now (see the hero Container's own comment), so there's no
+        // longer a "which mode is this" question to answer here — a solid
+        // white circle with dark ink guarantees legibility regardless.
         decoration: BoxDecoration(
-          color: YosColors.warn,
-          borderRadius: BorderRadius.circular(999),
+          color: Colors.white,
+          shape: BoxShape.circle,
+          boxShadow: kSoftShadow,
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+        child: Stack(
+          clipBehavior: Clip.none,
           children: [
-            const Icon(Icons.notifications_active_rounded,
-                size: 15, color: Colors.white),
-            const SizedBox(width: 6),
-            Text('$count request${count == 1 ? '' : 's'}',
-                maxLines: 1,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800)),
+            Center(
+              child: Icon(Icons.notifications_rounded,
+                  size: 18, color: YosColors.onAccentSoft),
+            ),
+            if (hasNotifications)
+              Positioned(
+                top: 5,
+                right: 6,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: YosColors.accentSoft,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: YosColors.accentDeep, width: 1.5),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 }
-

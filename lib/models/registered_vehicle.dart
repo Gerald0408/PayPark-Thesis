@@ -14,6 +14,8 @@ class RegisteredVehicle {
     this.docId,
     this.driverLicensePhotoPath,
     this.orCrPhotoPath,
+    this.driverLicensePhotoUrl,
+    this.orCrPhotoUrl,
     this.rfidTag,
     this.points = 0.0,
   });
@@ -42,12 +44,19 @@ class RegisteredVehicle {
   /// point — see PointsSettingsService.pointsForFee.
   final double points;
 
-  /// Local file paths only — see FaceAuthService's precedent for why photo
-  /// evidence stays device-local in this app: not synced to Firestore
-  /// beyond the path string itself, which is meaningless on any device
-  /// other than the one that captured it.
+  /// Local file paths — fast, no-network access on whichever device
+  /// actually captured the photo, but meaningless on any other device.
   final String? driverLicensePhotoPath;
   final String? orCrPhotoPath;
+
+  /// Firebase Storage download URLs (see VehicleDocumentStorage) — what
+  /// lets a *different* device (another collector's phone, the admin's)
+  /// display the same photo. Null until the local capture has actually
+  /// finished uploading (best-effort — see VehicleRegistry.register), so
+  /// a photo captured while offline may only have the local path above
+  /// until the next successful save syncs it.
+  final String? driverLicensePhotoUrl;
+  final String? orCrPhotoUrl;
 
   /// Search key: uppercase plate with spaces stripped, for exact-match lookup.
   static String normalize(String plate) =>
@@ -65,6 +74,9 @@ class RegisteredVehicle {
         if (driverLicensePhotoPath != null)
           'driver_license_photo_path': driverLicensePhotoPath,
         if (orCrPhotoPath != null) 'or_cr_photo_path': orCrPhotoPath,
+        if (driverLicensePhotoUrl != null)
+          'driver_license_photo_url': driverLicensePhotoUrl,
+        if (orCrPhotoUrl != null) 'or_cr_photo_url': orCrPhotoUrl,
         if (rfidTag != null) 'rfid_tag': rfidTag,
         if (rfidTag != null) 'rfid_tag_key': normalize(rfidTag!),
         'points': points,
@@ -84,6 +96,8 @@ class RegisteredVehicle {
       lastSeen: (d['last_seen'] as Timestamp?)?.toDate(),
       driverLicensePhotoPath: d['driver_license_photo_path'] as String?,
       orCrPhotoPath: d['or_cr_photo_path'] as String?,
+      driverLicensePhotoUrl: d['driver_license_photo_url'] as String?,
+      orCrPhotoUrl: d['or_cr_photo_url'] as String?,
       rfidTag: d['rfid_tag'] as String?,
       points: (d['points'] as num?)?.toDouble() ?? 0.0,
     );

@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import '../core/theme.dart';
 import '../models/collector.dart';
 import '../services/firestore_service.dart';
+import '../services/locale_controller.dart';
+import '../widgets/app_dialog.dart';
 import 'dashboard_screen.dart';
 import 'face_enroll_screen.dart';
 import 'intro_screen.dart';
@@ -95,14 +97,13 @@ class _RootShellState extends State<RootShell> {
   Widget build(BuildContext context) {
     switch (_gate) {
       case _Gate.checking:
-        return const Scaffold(
+        return Scaffold(
           backgroundColor: YosColors.bg,
-          body: Center(
-              child: CircularProgressIndicator(color: YosColors.accent)),
+          body:
+              Center(child: CircularProgressIndicator(color: YosColors.accent)),
         );
       case _Gate.needsPassword:
-        return _PasswordGate(
-            error: _passwordError, onSubmit: _confirmPassword);
+        return _PasswordGate(error: _passwordError, onSubmit: _confirmPassword);
       case _Gate.needsEnroll:
         final user = FirebaseAuth.instance.currentUser!;
         return FaceEnrollScreen(
@@ -199,20 +200,13 @@ class _RootTabsState extends State<_RootTabs> {
 
   Future<void> _handleAccountRemoved() async {
     if (!mounted) return;
-    await showDialog<void>(
-      context: context,
+    await showAppConfirmDialog(
+      context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Access removed'),
-        content: const Text(
-            'An admin removed this account. You\'ll need to sign in again.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+      title: 'Access removed',
+      message: 'An admin removed this account. You\'ll need to sign in '
+          'again.',
+      confirmLabel: 'OK',
     );
     await YosRepository.instance.logout();
     if (!mounted) return;
@@ -229,24 +223,14 @@ class _RootTabsState extends State<_RootTabs> {
   }
 
   Future<void> _confirmLogout() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Log out?'),
-        content: const Text(
-            'You\'ll need to sign in again to start your next collection.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Log out',
-                style: TextStyle(color: YosColors.bad)),
-          ),
-        ],
-      ),
+    final confirmed = await showAppConfirmDialog(
+      context,
+      title: 'Log out?',
+      message: 'You\'ll need to sign in again to start your next '
+          'collection.',
+      confirmLabel: 'Log out',
+      confirmIcon: Icons.logout_rounded,
+      confirmColor: YosColors.bad,
     );
     if (confirmed != true) return;
     await YosRepository.instance.logout();
@@ -259,13 +243,50 @@ class _RootTabsState extends State<_RootTabs> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: YosColors.bg,
+      // Lets whichever tab's own body paint behind the floating nav bar
+      // instead of stopping at its reserved strip — without this, that
+      // strip (and the margin around the floating pill within it) shows
+      // this Scaffold's own backgroundColor instead of the active tab's,
+      // which read as a stray off-white band under Dashboard's lime
+      // background specifically. Profile/Printer are unaffected: their
+      // own canvas is already this same backgroundColor, so there's
+      // nothing to mismatch.
+      extendBody: true,
+      // Each tab wrapped in its own RepaintBoundary, and TickerMode-gated
+      // so only the visible one keeps animating. Without these, Flutter
+      // composites every IndexedStack child into the same paint layer
+      // *and* every tab's animations (a tab's entrance PopIns, the
+      // tap-glow blob in TouchGlowOverlay) keep right on ticking even
+      // while offstage — neither pauses just because its tab isn't the
+      // one showing — so a still-running animation from the tab you just
+      // left can leave stale pixels bleeding into the freshly-selected
+      // tab's frame on switch. Isolating each tab's compositing layer and
+      // freezing its tickers when hidden is what stops that "ghost of the
+      // previous tab" artifact.
       body: IndexedStack(
         index: _index,
-        children: const [
-          DashboardScreen(),
-          ProfileScreen(),
-          PrinterSettingsScreen(embedded: true),
-          SizedBox.shrink(), // Logout has no screen — see class doc.
+        children: [
+          for (var i = 0; i < 4; i++)
+            TickerMode(
+              enabled: i == _index,
+              child: RepaintBoundary(
+                // Deliberately NOT const: a const instance is
+                // canonicalized, so the exact same object comes back from
+                // this switch on every rebuild of this widget. Flutter's
+                // Element.updateChild shortcuts on
+                // `identical(oldWidget, newWidget)` and skips calling
+                // update()/rebuild() on that child entirely when it sees
+                // the same const instance again — a plain (non-const)
+                // instance is a new object each time instead, so the
+                // normal update path always runs.
+                child: switch (i) {
+                  0 => DashboardScreen(),
+                  1 => ProfileScreen(),
+                  2 => PrinterSettingsScreen(embedded: true),
+                  _ => const SizedBox.shrink(), // Logout has no screen.
+                },
+              ),
+            ),
         ],
       ),
       bottomNavigationBar: _FloatingNavBar(
@@ -276,11 +297,11 @@ class _RootTabsState extends State<_RootTabs> {
   }
 }
 
-/// Floating pill-shaped nav bar — a dark rounded bar inset from the
-/// screen edges, where the selected item expands into an icon+label pill
-/// and the others sit as bare icons. Stock Material [BottomNavigationBar]
-/// can't do the per-item expand-on-select shape, so this is a small
-/// custom widget instead.
+/// Floating pill-shaped nav bar — a rounded bar inset from the screen
+/// edges, where every item sits in its own icon circle and the selected
+/// one expands into a circle+label pill lit up in the accent green. Stock
+/// Material [BottomNavigationBar] can't do the per-item expand-on-select
+/// shape, so this is a small custom widget instead.
 class _FloatingNavBar extends StatelessWidget {
   const _FloatingNavBar({required this.index, required this.onTap});
 
@@ -294,34 +315,89 @@ class _FloatingNavBar extends StatelessWidget {
     (icon: Icons.logout_rounded, label: 'Logout'),
   ];
 
+  /// [_items]' labels stay plain English literals (a const list can't
+  /// call [t] itself) — this is the Filipino equivalent for whichever one
+  /// is showing.
+  static String _label(String en) {
+    switch (en) {
+      case 'Home':
+        return t('Home', 'Home');
+      case 'Profile':
+        return t('Profile', 'Profile');
+      case 'Printer':
+        return t('Printer', 'Printer');
+      case 'Logout':
+        return t('Logout', 'Mag-log out');
+      default:
+        return en;
+    }
+  }
+
+  // Tracks the app's light/dark mode instead of always being a dark
+  // floating surface. Dark mode keeps its original near-black-to-green
+  // tones (dark mode's canvas is genuinely dark, not lime — see
+  // DashboardScreen's build() for why). Light mode's bar is lime itself
+  // now, matching the rest of the screen's lime backdrop, with the
+  // selected item picked out by a dark-green (accentDeep) pill — the same
+  // fill the dashboard's Quick Actions tiles and hero buttons use — rather
+  // than a same-colored fill that would blend straight into the bar, or a
+  // plain white one that read as disconnected from the lime around it.
+  static Color get _barColor =>
+      YosColors.isDark ? const Color(0xFF0C0E11) : YosColors.accentLight;
+  static Color get _pillColor =>
+      YosColors.isDark ? const Color(0xFF1B1F24) : YosColors.accentDeepLight;
+  static Color get _idleCircleColor => YosColors.isDark
+      ? const Color(0xFF23272E)
+      : YosColors.accentDeepLight.withValues(alpha: 0.25);
+  static Color get _idleIconColor => YosColors.isDark
+      ? const Color(0xFF9AA1AE)
+      : YosColors.onAccent.withValues(alpha: 0.6);
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      minimum: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+      minimum: const EdgeInsets.fromLTRB(20, 0, 20, 10),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
-          color: YosColors.accentDeep,
+          color: _barColor,
           borderRadius: BorderRadius.circular(999),
           boxShadow: kSoftShadow,
         ),
         child: Row(
+          // Leftover row width (after every item claims just its own
+          // natural size below) spreads out as gaps *between* items
+          // instead of being dumped into the selected pill's background —
+          // that dumping is what was leaving a big empty-looking stretch
+          // to the right of the selected label.
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Flexible, not a bare pill: spaceBetween only distributes
-            // *extra* space — on a narrow phone or a bumped-up text
-            // scale, four pills' combined natural width can exceed what's
-            // available, and without something able to shrink, that
-            // overflows off the right edge instead of just tightening up.
-            for (var i = 0; i < _items.length; i++)
+            // Every item is uniformly wrapped in Flexible (never bare, and
+            // never Expanded — a *different* concrete type) so the widget
+            // at each Row slot has the same runtimeType before and after a
+            // tap, letting Flutter update each item's existing element in
+            // place instead of tearing down and remounting the whole row
+            // on every switch (which is what was producing a one-frame
+            // rendering artifact on tab switch). flex: 0 on every item —
+            // selected included — means RenderFlex treats all of them as
+            // fully inflexible, sized to their own natural content width
+            // rather than one of them being stretched to fill the row.
+            for (var i = 0; i < _items.length; i++) ...[
+              if (i != 0) const SizedBox(width: 6),
               Flexible(
+                flex: 0,
+                fit: FlexFit.loose,
                 child: _NavPillItem(
                   icon: _items[i].icon,
-                  label: _items[i].label,
+                  label: _label(_items[i].label),
                   selected: i == index,
+                  pillColor: _pillColor,
+                  idleCircleColor: _idleCircleColor,
+                  idleIconColor: _idleIconColor,
                   onTap: () => onTap(i),
                 ),
               ),
+            ],
           ],
         ),
       ),
@@ -334,13 +410,21 @@ class _NavPillItem extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.selected,
+    required this.pillColor,
+    required this.idleCircleColor,
+    required this.idleIconColor,
     required this.onTap,
   });
 
   final IconData icon;
   final String label;
   final bool selected;
+  final Color pillColor;
+  final Color idleCircleColor;
+  final Color idleIconColor;
   final VoidCallback onTap;
+
+  static const _circleSize = 40.0;
 
   @override
   Widget build(BuildContext context) {
@@ -349,24 +433,53 @@ class _NavPillItem extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOut,
-        padding: EdgeInsets.symmetric(
-            horizontal: selected ? 18 : 14, vertical: 12),
+        padding: EdgeInsets.fromLTRB(3, 3, selected ? 14 : 3, 3),
         decoration: BoxDecoration(
-          color: selected ? Colors.white24 : Colors.transparent,
+          color: selected ? pillColor : Colors.transparent,
           borderRadius: BorderRadius.circular(999),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.white, size: 20),
+            Container(
+              width: _circleSize,
+              height: _circleSize,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                // White in light mode, not accent-colored — the selected
+                // pill wrapping this circle is a dark accent color there,
+                // so a white badge reads as a clean chip instead of a
+                // same-hue blend. Dark mode keeps the accent-colored
+                // circle: its pill is near-black, where the (pale, in
+                // dark mode) accent already pops.
+                color: selected
+                    ? (YosColors.isDark ? YosColors.accent : Colors.white)
+                    : idleCircleColor,
+                shape: BoxShape.circle,
+              ),
+              // Fixed dark icon when selected, not YosColors.onAccent —
+              // see dashboard_screen.dart's _NavTile for why: this
+              // circle's fill (white in light mode, pale accent in dark
+              // mode) always needs dark ink on top regardless of mode,
+              // but onAccent itself now flips to white in light mode.
+              child: Icon(icon,
+                  color: selected ? const Color(0xFF1B1B1B) : idleIconColor,
+                  size: 20),
+            ),
             if (selected) ...[
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
+              // Fixed white, not YosColors.ink: the selected pill is dark
+              // in both modes now (accentDeepLight in light mode, the
+              // near-black #1B1F24 in dark mode), so this no longer needs
+              // to flip with the toggle.
               Flexible(
                 child: Text(label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700)),
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14)),
               ),
             ],
           ],
@@ -427,14 +540,13 @@ class _PasswordGateState extends State<_PasswordGate> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(Icons.shield_rounded,
-                  color: YosColors.accentDeep, size: 48),
+              Icon(Icons.shield_rounded, color: YosColors.accentDeep, size: 48),
               const SizedBox(height: 16),
               const Text('Face ID setup required',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                   'Every collector account needs Face ID enrolled on this '
                   'device before continuing. Confirm your password to set '
                   'it up now.',
@@ -465,7 +577,7 @@ class _PasswordGateState extends State<_PasswordGate> {
               ],
               const SizedBox(height: 20),
               _busy
-                  ? const Center(
+                  ? Center(
                       child: CircularProgressIndicator(color: YosColors.accent))
                   : FilledButton(
                       onPressed: _submit, child: const Text('Continue')),
