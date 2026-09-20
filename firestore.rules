@@ -295,6 +295,7 @@ service cloud.firestore {
           'default_zone_id', 'registered_at', 'entry_count', 'last_seen',
           'driver_license_photo_path', 'or_cr_photo_path',
           'driver_license_photo_url', 'or_cr_photo_url',
+          'documents_path', 'documents_url',
           'rfid_tag', 'rfid_tag_key', 'points'
         ]);
       allow delete: if hasFaceId();

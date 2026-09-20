@@ -318,13 +318,12 @@ class _ProfileBodyState extends State<_ProfileBody> {
                     PopIn(child: _buildEditCard(me))
                   else
                     PopIn(child: _buildReadCard(context, me)),
-                  // The only remaining action here (Collectors) is
-                  // admin-only — skip the whole card for a regular
+                  // Collectors is admin-only — skip it for a regular
                   // collector instead of showing an empty white box.
                   if (!_editing && me?.isAdmin == true) ...[
                     const SizedBox(height: 14),
                     PopIn(
-                      delayMs: 60,
+                      delayMs: 90,
                       child: GlassCard(
                         padding: EdgeInsets.zero,
                         child: ListTile(

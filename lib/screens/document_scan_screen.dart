@@ -7,72 +7,25 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image/image.dart' as img;
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/theme.dart';
 import '../services/locale_controller.dart';
-
-/// Reconstructs recognized text in genuine top-to-bottom, left-to-right
-/// reading order using each line's actual position on the page, instead
-/// of trusting RecognizedText.text's own block order. ML Kit groups text
-/// into blocks by visual proximity, not by row — on a two-column layout
-/// like a PH driver's license (a label and its value sitting side by
-/// side, or two unrelated fields sharing a horizontal band), that block
-/// order routinely interleaves lines that have nothing to do with each
-/// other, which is what "the text isn't aligned" was actually seeing.
-///
-/// Every recognized line is flattened, sorted by vertical position, then
-/// grouped into rows with any other line whose vertical center falls
-/// within about 60% of a line-height of the current row — narrow enough
-/// that a genuinely new row (the next label down) still starts a new
-/// line, wide enough to tolerate the slight vertical jitter between two
-/// lines that are really on the same printed row. Each row is then
-/// sorted left-to-right before being joined, so a label and its value
-/// come out in the right order even when ML Kit read them as separate
-/// blocks.
-String _readingOrderText(RecognizedText recognized) {
-  final lines = <TextLine>[
-    for (final block in recognized.blocks) ...block.lines,
-  ];
-  if (lines.isEmpty) return recognized.text;
-  lines.sort((a, b) => a.boundingBox.top.compareTo(b.boundingBox.top));
-
-  final rows = <List<TextLine>>[];
-  for (final line in lines) {
-    final lineMid = (line.boundingBox.top + line.boundingBox.bottom) / 2;
-    if (rows.isNotEmpty) {
-      final lastRow = rows.last;
-      final rowMid = lastRow
-              .map((l) => (l.boundingBox.top + l.boundingBox.bottom) / 2)
-              .reduce((a, b) => a + b) /
-          lastRow.length;
-      final rowHeight =
-          lastRow.map((l) => l.boundingBox.height).reduce((a, b) => a + b) /
-              lastRow.length;
-      if ((lineMid - rowMid).abs() < rowHeight * 0.6) {
-        lastRow.add(line);
-        continue;
-      }
-    }
-    rows.add([line]);
-  }
-
-  final buffer = StringBuffer();
-  for (final row in rows) {
-    row.sort((a, b) => a.boundingBox.left.compareTo(b.boundingBox.left));
-    buffer.writeln(row.map((l) => l.text).join('   '));
-  }
-  return buffer.toString().trim();
-}
+import '../services/ocr_reading_order.dart';
+import '../services/vehicle_document_cache.dart';
 
 class DocumentScanResult {
-  const DocumentScanResult({required this.imagePath, required this.rawText});
+  const DocumentScanResult({required this.filePath, required this.rawText});
 
-  /// Permanent local path (app documents dir) — safe to persist and
-  /// reference later, unlike the camera plugin's own temp file.
-  final String imagePath;
+  /// Permanent local path (app documents dir) to the cropped capture —
+  /// safe to persist and reference later, unlike the camera plugin's own
+  /// temp file. Still a plain JPEG here: VehicleRegistry combines this
+  /// with whichever other document exists into one PDF at save time (see
+  /// DocumentPdf), rather than each capture becoming its own separate
+  /// file — that's what lets a collector retake just one document without
+  /// needing the other's image data on hand to rebuild anything.
+  final String filePath;
   final String rawText;
 }
 
@@ -265,15 +218,13 @@ class _DocumentScanScreenState extends State<DocumentScanScreen> {
     setState(() => _busy = true);
     try {
       final recognized = await tr.processImage(InputImage.fromFilePath(path));
-      final dir = await getApplicationDocumentsDirectory();
-      final docsDir = Directory('${dir.path}/vehicle_docs');
-      if (!await docsDir.exists()) await docsDir.create(recursive: true);
-      final savedPath = '${docsDir.path}/${const Uuid().v4()}.jpg';
-      await File(path).copy(savedPath);
+      final key = '${const Uuid().v4()}.jpg';
+      await VehicleDocumentCache.instance
+          .write(key, await File(path).readAsBytes());
       if (!mounted) return;
       Navigator.of(context).pop(
         DocumentScanResult(
-            imagePath: savedPath, rawText: _readingOrderText(recognized)),
+            filePath: key, rawText: OcrReadingOrder.reconstruct(recognized)),
       );
     } catch (e) {
       if (mounted) {

@@ -1,6 +1,11 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../core/constants.dart';
 import '../core/theme.dart';
@@ -8,6 +13,7 @@ import '../models/registered_vehicle.dart';
 import '../services/locale_controller.dart';
 import '../services/points_settings_service.dart';
 import '../services/registry_service.dart';
+import '../services/vehicle_document_cache.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/toast.dart';
@@ -33,6 +39,8 @@ class RegistryScreen extends StatefulWidget {
 class _RegistryScreenState extends State<RegistryScreen> {
   final _search = TextEditingController();
   _SortMode _sort = _SortMode.entriesDesc;
+  bool _transferringPhotos = false;
+  bool _fabOpen = false;
 
   // Grabbed once, not called fresh inside build() — the search box's own
   // setState on every keystroke would otherwise hand StreamBuilder a
@@ -46,6 +54,16 @@ class _RegistryScreenState extends State<RegistryScreen> {
   void initState() {
     super.initState();
     _search.addListener(() => setState(() {}));
+    // Self-heals any vehicle whose document photo only ever uploaded
+    // locally (e.g. the initial upload failed over a weak signal in the
+    // field) — this list is visited far more often than any one vehicle's
+    // own detail screen, so it's a much more reliable place to retry than
+    // waiting for someone to reopen that exact vehicle. One-shot per visit
+    // (not a live subscription) — no need to re-sweep on every entry-count
+    // update this same stream also fires on.
+    _vehicles.first
+        .then(VehicleRegistry.instance.backfillAllIfNeeded)
+        .catchError((_) {});
   }
 
   @override
@@ -77,6 +95,170 @@ class _RegistryScreenState extends State<RegistryScreen> {
     return out;
   }
 
+  /// Manual cross-device photo carry, since this project's Firebase plan
+  /// has no Storage: packs every document photo this device has cached
+  /// (see VehicleDocumentCache) into a zip and hands it to the OS share
+  /// sheet — Bluetooth, USB, a chat app, whatever the collector has on
+  /// hand to physically get it to another phone.
+  Future<void> _exportPhotos() async {
+    setState(() => _transferringPhotos = true);
+    try {
+      final zipBytes = VehicleDocumentCache.instance.exportAll();
+      if (zipBytes.isEmpty) {
+        if (mounted) {
+          Toast.warn(context,
+              t('No photos on this device yet', 'Wala pang larawan sa device na ito'));
+        }
+        return;
+      }
+      final dir = await getTemporaryDirectory();
+      final stamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+      final file = File('${dir.path}/paypark_photos_$stamp.zip');
+      await file.writeAsBytes(zipBytes);
+      if (!mounted) return;
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: t('PayPark vehicle document photos',
+            'Mga larawan ng dokumento ng sasakyan — PayPark'),
+      );
+    } catch (e) {
+      if (mounted) {
+        Toast.error(context, t("Couldn't export photos: $e", 'Hindi na-export: $e'));
+      }
+    } finally {
+      if (mounted) setState(() => _transferringPhotos = false);
+    }
+  }
+
+  /// The receiving half of [_exportPhotos] — picks a zip (saved from a
+  /// share, downloaded, copied over USB, however it arrived) and restores
+  /// every photo it contains into this device's own cache. Every
+  /// RegisteredVehicle that already names one of these keys in its photo
+  /// fields (synced for free via Firestore, from whichever device
+  /// originally captured it) picks it up immediately — nothing else to
+  /// reconcile.
+  Future<void> _importPhotos() async {
+    final result = await FilePicker.platform
+        .pickFiles(type: FileType.custom, allowedExtensions: ['zip']);
+    final path = result?.files.single.path;
+    if (path == null || !mounted) return;
+    setState(() => _transferringPhotos = true);
+    try {
+      final bytes = await File(path).readAsBytes();
+      final count = await VehicleDocumentCache.instance.importZip(bytes);
+      if (mounted) {
+        Toast.success(context,
+            t('Imported $count photo(s)', 'Na-import ang $count na larawan'));
+      }
+    } catch (e) {
+      if (mounted) {
+        Toast.error(context, t("Couldn't import photos: $e", 'Hindi na-import: $e'));
+      }
+    } finally {
+      if (mounted) setState(() => _transferringPhotos = false);
+    }
+  }
+
+  /// Register/Export/Import as one speed-dial FAB instead of three
+  /// separate controls competing for space — Register stays the single
+  /// most-reached action (closest to the toggle once expanded), the two
+  /// photo-transfer actions sit above it since they're rare, deliberate,
+  /// one-time-per-device actions, not everyday taps.
+  Widget _buildFab(BuildContext context) {
+    if (_transferringPhotos) {
+      return FloatingActionButton(
+        heroTag: 'fab-toggle',
+        backgroundColor: YosColors.accent,
+        onPressed: null,
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(
+              strokeWidth: 2.4, color: YosColors.onAccent),
+        ),
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (_fabOpen) ...[
+          _fabOption(
+            icon: Icons.download_rounded,
+            label: t('Import photos', 'I-import ang larawan'),
+            onTap: _importPhotos,
+          ),
+          const SizedBox(height: 10),
+          _fabOption(
+            icon: Icons.ios_share_rounded,
+            label: t('Export photos', 'I-export ang larawan'),
+            onTap: _exportPhotos,
+          ),
+          const SizedBox(height: 10),
+          _fabOption(
+            icon: Icons.directions_car_filled_rounded,
+            label: t('Register vehicle', 'Magrehistro ng sasakyan'),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const RegisterVehicleScreen())),
+          ),
+          const SizedBox(height: 14),
+        ],
+        FloatingActionButton(
+          heroTag: 'fab-toggle',
+          backgroundColor: YosColors.accent,
+          foregroundColor: YosColors.onAccent,
+          tooltip: _fabOpen
+              ? t('Close', 'Isara')
+              : t('Register / Export / Import', 'Magrehistro / I-export / I-import'),
+          onPressed: () => setState(() => _fabOpen = !_fabOpen),
+          child: AnimatedRotation(
+            // A "+" rotated 45° reads as an "x" — no separate close icon
+            // needed, and nothing to cancel out.
+            turns: _fabOpen ? 0.125 : 0,
+            duration: const Duration(milliseconds: 200),
+            child: const Icon(Icons.add_rounded),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _fabOption({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: YosColors.surface,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: kSoftShadow,
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  color: YosColors.ink,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13)),
+        ),
+        const SizedBox(width: 10),
+        FloatingActionButton.small(
+          heroTag: label,
+          backgroundColor: YosColors.accent,
+          foregroundColor: YosColors.onAccent,
+          onPressed: () {
+            setState(() => _fabOpen = false);
+            onTap();
+          },
+          child: Icon(icon),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -86,15 +268,7 @@ class _RegistryScreenState extends State<RegistryScreen> {
         title: Text(t('Registered Vehicles', 'Mga Nakarehistrong Sasakyan'),
             style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const RegisterVehicleScreen())),
-        backgroundColor: YosColors.accent,
-        foregroundColor: YosColors.onAccent,
-        icon: const Icon(Icons.add_rounded),
-        label: Text(t('Register', 'Magrehistro'),
-            style: const TextStyle(fontWeight: FontWeight.w800)),
-      ),
+      floatingActionButton: _buildFab(context),
       body: TouchGlowOverlay(
         child: SafeArea(
           child: StreamBuilder<List<RegisteredVehicle>>(
@@ -757,6 +931,15 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                 ? t('Vehicle registered', 'Narehistro ang sasakyan')
                 : t('Changes saved', 'Na-save ang mga pagbabago'));
         Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      // Without this, a failed save (permission-denied, offline with no
+      // cache, etc.) used to fail completely silently — no toast, no
+      // navigation, just the button quietly stopping — leaving no way to
+      // tell "saved" apart from "did nothing" from the UI alone.
+      if (mounted) {
+        Toast.error(context,
+            t("Couldn't save: $e", 'Hindi na-save: $e'));
       }
     } finally {
       if (mounted) setState(() => _busy = false);

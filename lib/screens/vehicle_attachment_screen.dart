@@ -2,12 +2,17 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:uuid/uuid.dart';
 
 import '../core/constants.dart';
 import '../core/theme.dart';
 import '../services/document_ocr.dart';
 import '../services/locale_controller.dart';
+import '../services/ocr_reading_order.dart';
 import '../services/plate_matcher.dart';
+import '../services/vehicle_document_cache.dart';
 import '../widgets/doc_photo_view.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
@@ -128,16 +133,71 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
       ),
     );
     if (result == null || !mounted) return;
+    _applyDocumentResult(
+        isLicense: isLicense, filePath: result.filePath, rawText: result.rawText);
+  }
 
-    final oldPath = isLicense ? _licensePhotoPath : _orCrPhotoPath;
-    if (oldPath != null) {
-      final f = File(oldPath);
-      if (await f.exists()) unawaited(f.delete());
+  /// Lets the collector pick an existing photo from the device's own
+  /// gallery instead of using the camera — a document photo someone
+  /// already sent them, or one taken earlier outside this app. Runs the
+  /// same OCR auto-fill as [_scanDocument]; the picked photo isn't
+  /// cropped to a guide frame the way a fresh capture is (there's no
+  /// camera preview to align against here), so whatever the collector
+  /// picked is used as-is.
+  Future<void> _importImage({required bool isLicense}) async {
+    final picked = await ImagePicker()
+        .pickImage(source: ImageSource.gallery, imageQuality: 90);
+    if (picked == null || !mounted) return;
+    try {
+      final tr = TextRecognizer(script: TextRecognitionScript.latin);
+      final RecognizedText recognized;
+      try {
+        recognized = await tr.processImage(InputImage.fromFilePath(picked.path));
+      } finally {
+        await tr.close();
+      }
+      final key = '${const Uuid().v4()}.jpg';
+      await VehicleDocumentCache.instance
+          .write(key, await File(picked.path).readAsBytes());
+      if (!mounted) return;
+      _applyDocumentResult(
+          isLicense: isLicense,
+          filePath: key,
+          rawText: OcrReadingOrder.reconstruct(recognized));
+    } catch (e) {
+      if (mounted) {
+        Toast.error(context,
+            t("Couldn't import photo: $e", 'Hindi na-import ang litrato: $e'));
+      }
     }
+  }
 
+  /// Shared tail for both [_scanDocument] and [_importImage]: runs
+  /// DocumentOcr's best-effort parse over whichever photo just came in
+  /// and pre-fills whichever of driver name / plate / vehicle type it
+  /// could read. That parse is a guess, not a guarantee — small print and
+  /// non-standard layouts routinely confuse it — so every field it
+  /// touches stays editable (see the TextFormFields below), and "View"
+  /// always lets the collector check the auto-fill against the actual
+  /// document rather than a reconstructed text guess, which catches
+  /// everything a parser could miss (signatures, photos, anything OCR
+  /// just can't read).
+  void _applyDocumentResult({
+    required bool isLicense,
+    required String filePath,
+    required String rawText,
+  }) {
+    // The old local file is deliberately left on disk here rather than
+    // deleted — this screen's Confirm hasn't run yet, let alone the
+    // caller's own save. Deleting it eagerly used to mean backing out
+    // after a retake (system back, cancelling the parent form, the app
+    // getting killed) silently destroyed the previous photo with no way
+    // back, since it might never have finished syncing to Storage yet.
+    // A harmless orphaned file is a far cheaper mistake than losing a
+    // vehicle's captured document.
     final read = <String>[];
     if (isLicense) {
-      final parsed = DocumentOcr.parseDriverLicense(result.rawText);
+      final parsed = DocumentOcr.parseDriverLicense(rawText);
       if (parsed.name != null) {
         _driver.text = parsed.name!;
         read.add(parsed.name!);
@@ -146,7 +206,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
         read.add('License ${parsed.licenseNumber}');
       }
     } else {
-      final parsed = DocumentOcr.parseOrCr(result.rawText);
+      final parsed = DocumentOcr.parseOrCr(rawText);
       if (parsed.plate != null) {
         _plate.text = parsed.plate!;
         read.add('Plate ${parsed.plate}');
@@ -164,17 +224,16 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
       }
     }
 
-    if (!mounted) return;
     setState(() {
       if (isLicense) {
-        _licensePhotoPath = result.imagePath;
+        _licensePhotoPath = filePath;
         // A fresh capture replaces the image entirely — any URL already
         // synced for the old photo no longer matches, so it's cleared
         // rather than kept, which is what tells register() to actually
         // upload this new one (see its own doc comment).
         _licensePhotoUrl = null;
       } else {
-        _orCrPhotoPath = result.imagePath;
+        _orCrPhotoPath = filePath;
         _orCrPhotoUrl = null;
       }
     });
@@ -209,7 +268,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
       ),
     );
     if (result == null) return;
-    unawaited(File(result.imagePath).delete());
+    unawaited(File(result.filePath).delete());
     if (!mounted) return;
     final plate = PlateMatcher.bestMatch(PlateMatcher.clean(result.rawText));
     if (plate == null) {
@@ -228,6 +287,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
   /// real image instead of a reconstructed OCR text guess (see
   /// _scanDocument's doc comment).
   void _viewPhoto(String? path, String? url) {
+    final view = DocPhotoView(path: path, url: url, fit: BoxFit.contain);
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => Scaffold(
         backgroundColor: Colors.black,
@@ -235,12 +295,14 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
           backgroundColor: Colors.black,
           iconTheme: const IconThemeData(color: Colors.white),
         ),
+        // A PDF already provides its own pinch-to-zoom (see
+        // DocPhotoView/PdfPreview) — wrapping it in another InteractiveViewer
+        // would fight that one over the same gestures, so this only adds
+        // one for the plain-image fallback case.
         body: Center(
-          child: InteractiveViewer(
-            minScale: 0.5,
-            maxScale: 4,
-            child: DocPhotoView(path: path, url: url, fit: BoxFit.contain),
-          ),
+          child: DocPhotoView.isPdfSource(path, url)
+              ? view
+              : InteractiveViewer(minScale: 0.5, maxScale: 4, child: view),
         ),
       ),
     ));
@@ -281,6 +343,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                       photoPath: _licensePhotoPath,
                       photoUrl: _licensePhotoUrl,
                       onScan: () => _scanDocument(isLicense: true),
+                      onImport: () => _importImage(isLicense: true),
                       onViewPhoto: (_licensePhotoPath ?? _licensePhotoUrl) ==
                               null
                           ? null
@@ -297,6 +360,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                       photoPath: _orCrPhotoPath,
                       photoUrl: _orCrPhotoUrl,
                       onScan: () => _scanDocument(isLicense: false),
+                      onImport: () => _importImage(isLicense: false),
                       onViewPhoto: (_orCrPhotoPath ?? _orCrPhotoUrl) == null
                           ? null
                           : () => _viewPhoto(_orCrPhotoPath, _orCrPhotoUrl),
@@ -377,13 +441,18 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
 }
 
 /// One document's capture card — photo preview (or placeholder) on top,
-/// View + Capture/Retake side by side below.
+/// View / Capture-Retake / Import from a row below. View and Import stay
+/// compact icon-only buttons rather than full labeled ones so the row
+/// still fits three actions on a narrow phone without wrapping or
+/// overflowing — Capture/Retake is the one action that actually needs a
+/// label, being the primary action on this card.
 class _DocCaptureCard extends StatelessWidget {
   const _DocCaptureCard({
     required this.label,
     required this.photoPath,
     required this.photoUrl,
     required this.onScan,
+    required this.onImport,
     this.onViewPhoto,
   });
 
@@ -391,6 +460,10 @@ class _DocCaptureCard extends StatelessWidget {
   final String? photoPath;
   final String? photoUrl;
   final VoidCallback onScan;
+
+  /// Opens the device's own gallery to pick an existing photo instead of
+  /// using the camera — see VehicleAttachmentScreen._importImage.
+  final VoidCallback onImport;
   final VoidCallback? onViewPhoto;
 
   @override
@@ -422,25 +495,20 @@ class _DocCaptureCard extends StatelessWidget {
         const SizedBox(height: 10),
         Row(
           children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: onViewPhoto,
-                icon: const Icon(Icons.visibility_outlined, size: 18),
-                // FittedBox: a longer translated label ("Tingnan"/"Kunin
-                // Ulit") had nothing stopping it from overflowing this
-                // narrow, icon-sharing button — see BreathingGlowButton's
-                // matching fix for the same underlying issue.
-                label: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(t('View', 'Tingnan'), maxLines: 1),
-                ),
-              ),
+            IconButton.outlined(
+              onPressed: onViewPhoto,
+              tooltip: t('View', 'Tingnan'),
+              icon: const Icon(Icons.visibility_outlined, size: 20),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: FilledButton.icon(
                 onPressed: onScan,
                 icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                // FittedBox: a longer translated label ("Kunin Ulit") had
+                // nothing stopping it from overflowing this narrow,
+                // icon-sharing button — see BreathingGlowButton's matching
+                // fix for the same underlying issue.
                 label: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
@@ -450,6 +518,12 @@ class _DocCaptureCard extends StatelessWidget {
                       maxLines: 1),
                 ),
               ),
+            ),
+            const SizedBox(width: 10),
+            IconButton.outlined(
+              onPressed: onImport,
+              tooltip: t('Import from device', 'I-import mula sa device'),
+              icon: const Icon(Icons.photo_library_outlined, size: 20),
             ),
           ],
         ),

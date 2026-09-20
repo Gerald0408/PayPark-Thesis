@@ -47,10 +47,7 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
   /// (and this screen never notices) for a vehicle that's already synced,
   /// or whose local file isn't on this device.
   Future<void> _syncPhotosIfNeeded() async {
-    final needsSync = (_vehicle.driverLicensePhotoPath != null &&
-            _vehicle.driverLicensePhotoUrl == null) ||
-        (_vehicle.orCrPhotoPath != null && _vehicle.orCrPhotoUrl == null);
-    if (!needsSync) return;
+    if (!VehicleRegistry.instance.needsPhotoSync(_vehicle)) return;
     await VehicleRegistry.instance.backfillPhotoSync(_vehicle);
     if (!mounted) return;
     final fresh = await VehicleRegistry.instance.lookup(_vehicle.plateNumber);
@@ -63,6 +60,7 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
   }
 
   void _viewPhoto(BuildContext context, String? path, String? url) {
+    final view = DocPhotoView(path: path, url: url, fit: BoxFit.contain);
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => Scaffold(
         backgroundColor: Colors.black,
@@ -70,12 +68,14 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
           backgroundColor: Colors.black,
           iconTheme: const IconThemeData(color: Colors.white),
         ),
+        // A PDF already provides its own pinch-to-zoom (see
+        // DocPhotoView/PdfPreview) — wrapping it in another InteractiveViewer
+        // would fight that one over the same gestures, so this only adds
+        // one for the plain-image fallback case.
         body: Center(
-          child: InteractiveViewer(
-            minScale: 0.5,
-            maxScale: 4,
-            child: DocPhotoView(path: path, url: url, fit: BoxFit.contain),
-          ),
+          child: DocPhotoView.isPdfSource(path, url)
+              ? view
+              : InteractiveViewer(minScale: 0.5, maxScale: 4, child: view),
         ),
       ),
     ));
@@ -171,40 +171,15 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                               fontWeight: FontWeight.w800,
                               fontSize: 16)),
                       const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _DocPhoto(
-                              label: t("Driver's license", "Driver's License"),
-                              path: vehicle.driverLicensePhotoPath,
-                              url: vehicle.driverLicensePhotoUrl,
-                              onTap: (vehicle.driverLicensePhotoPath ??
-                                          vehicle.driverLicensePhotoUrl) ==
-                                      null
-                                  ? null
-                                  : () => _viewPhoto(
-                                      context,
-                                      vehicle.driverLicensePhotoPath,
-                                      vehicle.driverLicensePhotoUrl),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _DocPhoto(
-                              label: 'OR/CR',
-                              path: vehicle.orCrPhotoPath,
-                              url: vehicle.orCrPhotoUrl,
-                              onTap: (vehicle.orCrPhotoPath ??
-                                          vehicle.orCrPhotoUrl) ==
-                                      null
-                                  ? null
-                                  : () => _viewPhoto(
-                                      context,
-                                      vehicle.orCrPhotoPath,
-                                      vehicle.orCrPhotoUrl),
-                            ),
-                          ),
-                        ],
+                      _DocumentFileTile(
+                        path: vehicle.documentsPath,
+                        url: vehicle.documentsUrl,
+                        onTap: (vehicle.documentsPath ??
+                                    vehicle.documentsUrl) ==
+                                null
+                            ? null
+                            : () => _viewPhoto(
+                                context, vehicle.documentsPath, vehicle.documentsUrl),
                       ),
                     ],
                   ),
@@ -252,50 +227,72 @@ class _DetailRow extends StatelessWidget {
   }
 }
 
-/// Document photo tile — the captured image itself (tap to zoom) or a
-/// plain "Not captured" placeholder if that document was never scanned.
-class _DocPhoto extends StatelessWidget {
-  const _DocPhoto(
-      {required this.label, required this.path, required this.url, this.onTap});
-  final String label;
+/// The vehicle's one combined documents file (driver's license + OR/CR,
+/// whichever were actually captured — see DocumentPdf/VehicleRegistry) —
+/// styled as a single tappable file/attachment row rather than an image
+/// thumbnail, since it's a real PDF now, not a bare photo. Disabled (no
+/// tap, no chevron) when neither document has ever been captured.
+class _DocumentFileTile extends StatelessWidget {
+  const _DocumentFileTile({required this.path, required this.url, this.onTap});
   final String? path;
   final String? url;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = path != null || url != null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: YosColors.sub)),
-        const SizedBox(height: 6),
-        InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: AspectRatio(
-              aspectRatio: 1.4,
-              child: hasPhoto
-                  ? DocPhotoView(path: path, url: url)
-                  : Container(
-                      color: YosColors.surfaceHigh,
-                      alignment: Alignment.center,
-                      child: Text(t('Not captured', 'Hindi Nakuha'),
-                          style: TextStyle(
-                              color: YosColors.sub,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600)),
-                    ),
-            ),
+    final hasFile = path != null || url != null;
+    return Material(
+      color: YosColors.surfaceHigh,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                    color: YosColors.accentSoft,
+                    borderRadius: BorderRadius.circular(12)),
+                alignment: Alignment.center,
+                child: Icon(
+                    hasFile
+                        ? Icons.picture_as_pdf_rounded
+                        : Icons.picture_as_pdf_outlined,
+                    color: YosColors.accentDeep,
+                    size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(t("Driver's License & OR/CR", "Driver's License at OR/CR"),
+                        style: TextStyle(
+                            color: YosColors.ink,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14)),
+                    const SizedBox(height: 2),
+                    Text(
+                        hasFile
+                            ? t('Tap to view', 'Tapikin para tingnan')
+                            : t('Not captured yet', 'Hindi pa nakuha'),
+                        style: TextStyle(
+                            color: YosColors.sub,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+              if (hasFile)
+                Icon(Icons.chevron_right_rounded, color: YosColors.sub),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }

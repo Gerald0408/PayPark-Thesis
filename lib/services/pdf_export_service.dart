@@ -1,24 +1,69 @@
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import '../core/constants.dart';
+
 /// Renders a simple title + generated-at header + data table as a PDF and
 /// hands it to the platform share sheet — used by the audit trail's
 /// "Export PDF" action for each of its tabs.
 ///
-/// The default PDF font (Helvetica) can't render the peso sign, so callers
-/// should format money as "PHP 150" rather than "₱150" — same convention
-/// PrinterService uses for 58 mm thermal receipts, which hit the same
-/// charset limit.
+/// The default PDF font (Helvetica) can't render the peso sign — it prints
+/// as a broken-glyph box instead (₱150 -> "☒150") — same charset limit
+/// PrinterService works around for 58 mm thermal receipts. Free-text audit
+/// descriptions (e.g. "fee set to ₱200") are written all over the app with
+/// the real ₱ character already baked in, so rather than relying on every
+/// call site to remember a PDF-safe format, every string that reaches this
+/// table (title, headers, cells, summary) is sanitized once here — see
+/// [_pdfSafe].
 class PdfExportService {
   PdfExportService._();
+
+  /// Swaps characters Helvetica can't render for a PDF-safe stand-in.
+  /// Currently just the peso sign -> "PHP " (matching PrinterService's own
+  /// receipt convention), extend here if another glyph turns up broken.
+  static String _pdfSafe(String s) => s.replaceAll('₱', 'PHP ');
+
+  /// Barangay seal for the letterhead — loaded once and cached (an asset
+  /// read per export is wasted work for bytes that never change). Null
+  /// means the asset failed to load; the letterhead still prints the org
+  /// name/address text either way, just without the seal image.
+  static pw.MemoryImage? _logoCache;
+
+  static Future<pw.MemoryImage?> _loadLogo() async {
+    final cached = _logoCache;
+    if (cached != null) return cached;
+    try {
+      final bytes = await rootBundle.load('assets/icon/logo.png');
+      final logo = pw.MemoryImage(
+          bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes));
+      _logoCache = logo;
+      return logo;
+    } catch (_) {
+      return null;
+    }
+  }
 
   static Future<void> exportTable({
     required String title,
     required List<String> headers,
     required List<List<String>> rows,
+    /// Label/value pairs (e.g. "Total transactions" / "42", "Total
+    /// collected" / "PHP 12,340") printed in a summary block right after
+    /// the table — omitted entirely when there's nothing to total, e.g.
+    /// the activity/access logs.
+    List<MapEntry<String, String>> summary = const [],
   }) async {
+    final safeTitleText = _pdfSafe(title);
+    final safeHeaders = headers.map(_pdfSafe).toList();
+    final safeRows = rows.map((r) => r.map(_pdfSafe).toList()).toList();
+    final safeSummary = summary
+        .map((e) => MapEntry(_pdfSafe(e.key), _pdfSafe(e.value)))
+        .toList();
+    final logo = await _loadLogo();
+
     final doc = pw.Document();
     final generatedAt =
         DateFormat('MMM d, yyyy · hh:mm a').format(DateTime.now());
@@ -26,10 +71,41 @@ class PdfExportService {
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
+        // Letterhead: seal + org name/address, repeated on every page —
+        // the report title/generated-at/record-count sits below its own
+        // divider so the letterhead reads as the issuing authority and the
+        // title block as which report this specific export is.
         header: (context) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            pw.Text(title,
+            pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
+              children: [
+                if (logo != null) ...[
+                  pw.SizedBox(width: 46, height: 46, child: pw.Image(logo)),
+                  pw.SizedBox(width: 12),
+                ],
+                pw.Expanded(
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(kOrgName,
+                          style: pw.TextStyle(
+                              fontSize: 16,
+                              fontWeight: pw.FontWeight.bold,
+                              color: PdfColors.teal700)),
+                      pw.Text(kOrgAddress,
+                          style: const pw.TextStyle(
+                              fontSize: 9, color: PdfColors.grey700)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            pw.SizedBox(height: 10),
+            pw.Divider(color: PdfColors.grey400, thickness: 0.6),
+            pw.SizedBox(height: 8),
+            pw.Text(safeTitleText,
                 style:
                     pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
             pw.SizedBox(height: 2),
@@ -42,8 +118,8 @@ class PdfExportService {
         ),
         build: (context) => [
           pw.TableHelper.fromTextArray(
-            headers: headers,
-            data: rows,
+            headers: safeHeaders,
+            data: safeRows,
             headerStyle: pw.TextStyle(
                 fontWeight: pw.FontWeight.bold,
                 fontSize: 9,
@@ -54,6 +130,39 @@ class PdfExportService {
             cellAlignment: pw.Alignment.centerLeft,
             oddRowDecoration: const pw.BoxDecoration(color: PdfColors.grey100),
           ),
+          if (safeSummary.isNotEmpty) ...[
+            pw.SizedBox(height: 14),
+            pw.Container(
+              padding: const pw.EdgeInsets.all(10),
+              decoration: pw.BoxDecoration(
+                color: PdfColors.grey100,
+                borderRadius: pw.BorderRadius.circular(6),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  for (final entry in safeSummary)
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+                      child: pw.Row(
+                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                        children: [
+                          pw.Text(entry.key,
+                              style: pw.TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: pw.FontWeight.bold)),
+                          pw.Text(entry.value,
+                              style: pw.TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: pw.FontWeight.bold,
+                                  color: PdfColors.teal700)),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -154,21 +154,42 @@ class DocumentOcr {
     );
   }
 
-  /// Maps an OR/CR's body-type text to one of this app's four
+  /// Maps an OR/CR's body-type text to one of this app's three
   /// [VehicleType] labels — still pure on-device pattern matching, no AI
   /// involved, just a wider vocabulary than a plain label-substring check.
   /// Philippine OR/CRs print either a plain body type ("TRICYCLE", "VAN",
   /// "TRUCK") or, less often, the LTO/UNECE classification code itself
   /// (e.g. "N1" for a light cargo pickup) — exact label names are checked
   /// first since they're the least likely to be a coincidental substring
-  /// of something else on the page.
+  /// of something else on the page. More specific keywords (e.g. "CLOSED
+  /// VAN") are listed before the plainer ones they'd otherwise collide
+  /// with (e.g. "VAN"), since the first matching entry wins.
   static const _typeKeywords = <String, List<String>>{
-    'Tricycle': ['TRICYCLE', 'TRIKE', 'L4', 'L5'],
-    'Van': ['VAN', 'AUV', 'M1', 'M2'],
-    'Truck': ['PICKUP', 'PICK-UP', 'UTILITY', 'N1'],
-    '10 Wheeler Truck': [
+    'Closed Van, Jeep, SUV, Tricycle': [
+      'TRICYCLE',
+      'TRIKE',
+      'JEEP',
+      'SUV',
+      'CLOSED VAN',
+      'L4',
+      'L5',
+    ],
+    'Forward/Elf': [
+      'VAN',
+      'AUV',
+      'FORWARD',
+      'ELF',
+      'PICKUP',
+      'PICK-UP',
+      'UTILITY',
+      'M1',
+      'M2',
+      'N1',
+    ],
+    'Trailer Truck/Ten Wheeler Truck': [
       '10 WHEELER',
       'TEN WHEELER',
+      'TRAILER',
       'CARGO TRUCK',
       'DUMP TRUCK',
       'N2',

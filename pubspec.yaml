@@ -40,6 +40,22 @@ dependencies:
   encrypt: ^5.0.3
   crypto: ^3.0.5
 
+  # Local on-device store for captured vehicle document photos
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Manual cross-device photo transfer (no Firebase Storage on the free
+  # plan — see VehicleDocumentCache's export/import)
+  archive: ^3.6.1
+  share_plus: ^10.1.4
+  file_picker: ^8.1.6
+
+  # Silent copy of captured document photos to public Downloads storage
+  # (survives an app uninstall/data-clear) — see VehicleDocumentCache's
+  # backup write. Uses Android's MediaStore API under the hood, required
+  # on this app's target SDK (scoped storage, no legacy direct file path).
+  media_store_plus: ^0.1.3
+
   # Utilities
   intl: ^0.19.0
   uuid: ^4.5.1

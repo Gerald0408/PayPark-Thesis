@@ -14,6 +14,19 @@ import '../widgets/glow_effects.dart';
 import 'face_enroll_screen.dart';
 import 'login_screen.dart';
 
+/// Pascal-cases a typed name so it's stored consistently (e.g. "juan DELA
+/// cruz" -> "Juan Dela Cruz") regardless of how the collector actually
+/// typed it — the keyboard's own [TextCapitalization.words] only hints at
+/// capitalization while typing, it doesn't correct a pasted or
+/// autocorrect-mangled value.
+String _pascalCaseName(String raw) => raw
+    .trim()
+    .split(RegExp(r'\s+'))
+    .map((w) => w.isEmpty
+        ? w
+        : w[0].toUpperCase() + w.substring(1).toLowerCase())
+    .join(' ');
+
 /// Self-service collector sign-up: full name, a chosen username, phone
 /// number, birthday, and a password the collector actually picks and
 /// knows.
@@ -123,7 +136,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _error = null;
     });
     try {
-      final name = _name.text.trim();
+      final name = _pascalCaseName(_name.text);
       final username = normalizeUsername(_username.text);
       final phone = _phone.text.trim();
       final birthday = _birthday!;

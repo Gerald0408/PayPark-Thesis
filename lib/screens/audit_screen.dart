@@ -8,6 +8,7 @@ import '../services/locale_controller.dart';
 import '../services/pdf_export_service.dart';
 import '../services/points_settings_service.dart' show formatPoints;
 import '../widgets/glow_effects.dart';
+import '../widgets/pdf_export_search_dialog.dart';
 import '../widgets/toast.dart';
 import 'logs_screen.dart';
 
@@ -59,6 +60,11 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
   late final Stream<List<AuditLog>> _auditLogs =
       YosRepository.instance.auditLogs();
 
+  // Reads the embedded Entries view's currently visible (search +
+  // time-filter + Show-count applied) rows for export — same pattern
+  // LogsScreen's own _logsKey uses for its copy of TransactionLogView.
+  final _entriesKey = GlobalKey<TransactionLogViewState>();
+
   // Column indices into the DataTable below: 2 = Date, 3 = Time,
   // 4 = Event, 5 = Actor. Columns 0 (row #) and 1 (sync status) aren't
   // sortable — row # always just reflects whatever order the rest of the
@@ -70,8 +76,6 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
   // setState) from inside the StreamBuilder below, purely so _exportPdf
   // has something to hand off without re-deriving the filter/sort itself.
   List<AuditLog> _visibleLogs = const [];
-
-  bool _exporting = false;
 
   // Anchors the post-export popup to the PDF button itself (see
   // _showPdfPopup) using its actual global screen position rather than a
@@ -314,78 +318,98 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
         _ => (Icons.circle_outlined, YosColors.seafoam),
       };
 
-  /// Exports whichever tab is currently open as a PDF and hands it to the
-  /// platform share sheet. Entries pulls the same full transaction list
-  /// [TransactionLogView] would show (its own search/time filter live only
-  /// inside that widget, so this exports everything rather than trying to
-  /// mirror a transient filter state); Activity/Access export the rows
-  /// already computed for the table above, in whatever sort order it's
-  /// currently in.
+  /// Opens a dedicated search dialog on top of the PDF button for whichever
+  /// tab is currently open — typing there narrows down exactly which
+  /// records go into the export, independent of whatever search/time
+  /// filter/Show-count or sort this screen's own table is currently set
+  /// to. Entries searches the embedded [TransactionLogView]'s full
+  /// transaction history (read off [_entriesKey], same as LogsScreen);
+  /// Activity/Access search the current tab's own rows (already
+  /// tab-filtered — Access vs. general Activity is a deliberate scope, not
+  /// a transient one).
   Future<void> _exportPdf() async {
-    if (_exporting) return;
-    setState(() => _exporting = true);
-    try {
-      if (_tab == _AuditTab.entries) {
-        final txs = await YosRepository.instance.allTransactions().first;
-        final dateFmt = DateFormat('MMM d, yyyy');
-        final timeFmt = DateFormat('hh:mm:ss a');
-        await PdfExportService.exportTable(
-          title: t('Transaction entries', 'Mga Transaksyon'),
-          headers: [
-            '#',
-            t('Date', 'Petsa'),
-            t('Time', 'Oras'),
-            t('Tracking ID', 'Tracking ID'),
-            t('Plate', 'Plaka'),
-            t('Driver', 'Driver'),
-            t('Fee', 'Bayad'),
-          ],
-          rows: [
-            for (var i = 0; i < txs.length; i++)
-              [
-                '${i + 1}',
-                dateFmt.format(txs[i].timestamp),
-                timeFmt.format(txs[i].timestamp),
-                txs[i].trackingId,
-                txs[i].plateNumber,
-                txs[i].driverName,
-                'PHP ${txs[i].fee.toStringAsFixed(0)}',
-              ],
-          ],
-        );
-      } else {
-        final logs = _visibleLogs;
-        if (logs.isEmpty) {
-          if (mounted) {
-            Toast.warn(context, t('Nothing to export yet.', 'Wala pang ie-export.'));
-          }
-          return;
-        }
-        final dateFmt = DateFormat('MMM d, yyyy');
-        final timeFmt = DateFormat('hh:mm:ss a');
-        await PdfExportService.exportTable(
-          title: _tab == _AuditTab.access
-              ? t('Access log', 'Access Log')
-              : t('Activity log', 'Activity Log'),
-          headers: [
-            '#',
-            t('Date', 'Petsa'),
-            t('Time', 'Oras'),
-            t('Event', 'Pangyayari'),
-            t('Actor', 'Gumawa'),
-          ],
-          rows: [
-            for (var i = 0; i < logs.length; i++)
-              [
-                '${i + 1}',
-                dateFmt.format(logs[i].timestamp),
-                timeFmt.format(logs[i].timestamp),
-                logs[i].description,
-                _actorDisplay(logs[i]),
-              ],
-          ],
-        );
+    if (_tab == _AuditTab.entries) {
+      final all = _entriesKey.currentState?.allTransactions ?? const [];
+      if (all.isEmpty) {
+        Toast.warn(context, t('Nothing to export yet.', 'Wala pang ie-export.'));
+        return;
       }
+      await showDialog<void>(
+        context: context,
+        builder: (_) => PdfExportSearchDialog<ParkingTransaction>(
+          items: all,
+          hintText: t(
+              'Plate, receipt ID, or driver…', 'Plaka, receipt ID, o driver…'),
+          matches: (tx, q) {
+            final query = q.toUpperCase();
+            return tx.plateNumber.toUpperCase().contains(query) ||
+                tx.trackingId.toUpperCase().contains(query) ||
+                tx.driverName.toUpperCase().contains(query);
+          },
+          itemLabel: (tx) => '${tx.trackingId} · ${tx.plateNumber} · '
+              '${tx.driverName}',
+          onExport: _generateEntriesPdf,
+        ),
+      );
+      return;
+    }
+    final logs = _visibleLogs;
+    if (logs.isEmpty) {
+      Toast.warn(context, t('Nothing to export yet.', 'Wala pang ie-export.'));
+      return;
+    }
+    final tab = _tab;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => PdfExportSearchDialog<AuditLog>(
+        items: logs,
+        hintText: t('Event or actor…', 'Pangyayari o gumawa…'),
+        matches: (log, q) {
+          final query = q.toUpperCase();
+          return log.description.toUpperCase().contains(query) ||
+              _actorDisplay(log).toUpperCase().contains(query);
+        },
+        itemLabel: (log) => '${log.description} — ${_actorDisplay(log)}',
+        onExport: (matched) => _generateActivityPdf(matched, tab),
+      ),
+    );
+  }
+
+  Future<void> _generateEntriesPdf(List<ParkingTransaction> txs) async {
+    try {
+      final dateFmt = DateFormat('MMM d, yyyy');
+      final timeFmt = DateFormat('hh:mm:ss a');
+      final totalFee = txs.fold<double>(0, (s, tx) => s + tx.fee);
+      await PdfExportService.exportTable(
+        title: t('Transaction entries', 'Mga Transaksyon'),
+        headers: [
+          '#',
+          t('Date', 'Petsa'),
+          t('Time', 'Oras'),
+          t('Tracking ID', 'Tracking ID'),
+          t('Plate', 'Plaka'),
+          t('Driver', 'Driver'),
+          t('Fee', 'Bayad'),
+        ],
+        rows: [
+          for (var i = 0; i < txs.length; i++)
+            [
+              '${i + 1}',
+              dateFmt.format(txs[i].timestamp),
+              timeFmt.format(txs[i].timestamp),
+              txs[i].trackingId,
+              txs[i].plateNumber,
+              txs[i].driverName,
+              'PHP ${txs[i].fee.toStringAsFixed(0)}',
+            ],
+        ],
+        summary: [
+          MapEntry(t('Total transactions', 'Kabuuang Transaksyon'),
+              '${txs.length}'),
+          MapEntry(t('Total collected', 'Kabuuang Nakolekta'),
+              'PHP ${totalFee.toStringAsFixed(0)}'),
+        ],
+      );
       if (mounted) {
         _queuePdfPopup(t('PDF sent to share sheet', 'Naipadala ang PDF'));
       }
@@ -394,8 +418,60 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
         _queuePdfPopup(t("Couldn't export PDF: $e", 'Hindi na-export ang PDF: $e'),
             isError: true);
       }
-    } finally {
-      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<void> _generateActivityPdf(
+      List<AuditLog> logs, _AuditTab tab) async {
+    try {
+      final dateFmt = DateFormat('MMM d, yyyy');
+      final timeFmt = DateFormat('hh:mm:ss a');
+      // Computed straight from [logs], not read off the currently
+      // rendered sort order (that sort can be by Event or Actor, not
+      // date) — earliest/latest here always reflect the real span of
+      // what's in the export regardless of which column it's sorted by.
+      final timestamps = logs.map((l) => l.timestamp).toList();
+      final earliest = timestamps.reduce((a, b) => a.isBefore(b) ? a : b);
+      final latest = timestamps.reduce((a, b) => a.isAfter(b) ? a : b);
+      final dateRange = dateFmt.format(earliest) == dateFmt.format(latest)
+          ? dateFmt.format(earliest)
+          : '${dateFmt.format(earliest)} - ${dateFmt.format(latest)}';
+      final actorCount = logs.map(_actorDisplay).toSet().length;
+      await PdfExportService.exportTable(
+        title: tab == _AuditTab.access
+            ? t('Access log', 'Access Log')
+            : t('Activity log', 'Activity Log'),
+        headers: [
+          '#',
+          t('Date', 'Petsa'),
+          t('Time', 'Oras'),
+          t('Event', 'Pangyayari'),
+          t('Actor', 'Gumawa'),
+        ],
+        rows: [
+          for (var i = 0; i < logs.length; i++)
+            [
+              '${i + 1}',
+              dateFmt.format(logs[i].timestamp),
+              timeFmt.format(logs[i].timestamp),
+              logs[i].description,
+              _actorDisplay(logs[i]),
+            ],
+        ],
+        summary: [
+          MapEntry(t('Total events', 'Kabuuang Pangyayari'), '${logs.length}'),
+          MapEntry(t('Date range', 'Saklaw ng Petsa'), dateRange),
+          MapEntry(t('Actors involved', 'Mga Kasangkot'), '$actorCount'),
+        ],
+      );
+      if (mounted) {
+        _queuePdfPopup(t('PDF sent to share sheet', 'Naipadala ang PDF'));
+      }
+    } catch (e) {
+      if (mounted) {
+        _queuePdfPopup(t("Couldn't export PDF: $e", 'Hindi na-export ang PDF: $e'),
+            isError: true);
+      }
     }
   }
 
@@ -410,15 +486,8 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
           IconButton(
             key: _pdfButtonKey,
             tooltip: t('Export PDF', 'I-export bilang PDF'),
-            onPressed: _exporting ? null : _exportPdf,
-            icon: _exporting
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2.4, color: YosColors.ink),
-                  )
-                : const Icon(Icons.picture_as_pdf_rounded),
+            onPressed: _exportPdf,
+            icon: const Icon(Icons.picture_as_pdf_rounded),
           ),
         ],
       ),
@@ -440,7 +509,7 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
                 // for real transparency this has to be the one true list,
                 // not a second copy that could drift from it.
                 child: _tab == _AuditTab.entries
-                    ? const TransactionLogView()
+                    ? TransactionLogView(key: _entriesKey)
                     : StreamBuilder<List<AuditLog>>(
                         stream: _auditLogs,
                         builder: (context, snap) {

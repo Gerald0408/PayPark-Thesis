@@ -9,8 +9,10 @@ import '../core/theme.dart';
 import '../models/transaction.dart';
 import '../services/firestore_service.dart';
 import '../services/locale_controller.dart';
+import '../services/pdf_export_service.dart';
 import '../services/printer_service.dart';
 import '../widgets/glow_effects.dart';
+import '../widgets/pdf_export_search_dialog.dart';
 import '../widgets/toast.dart';
 
 class LogsScreen extends StatefulWidget {
@@ -24,6 +26,92 @@ class LogsScreen extends StatefulWidget {
 }
 
 class _LogsScreenState extends State<LogsScreen> {
+  // Reads the embedded view's full transaction history for the "Export
+  // PDF" search dialog below — see TransactionLogViewState.allTransactions.
+  // Owned here, not by TransactionLogView itself, so the export button can
+  // live in this screen's own AppBar, same placement AuditScreen's "Export
+  // PDF" uses.
+  final _logsKey = GlobalKey<TransactionLogViewState>();
+
+  /// Opens a dedicated search dialog on top of the PDF button — typing
+  /// there narrows down exactly which transactions go into the export,
+  /// independent of whatever this screen's own search/time filter/
+  /// Show-count are currently set to.
+  Future<void> _exportPdf() async {
+    final all = _logsKey.currentState?.allTransactions ?? const [];
+    if (all.isEmpty) {
+      Toast.warn(context, t('Nothing to export yet.', 'Wala pang ie-export.'));
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (_) => PdfExportSearchDialog<ParkingTransaction>(
+        items: all,
+        hintText:
+            t('Plate, receipt ID, or driver…', 'Plaka, receipt ID, o driver…'),
+        matches: (tx, q) {
+          final query = q.toUpperCase();
+          return tx.plateNumber.toUpperCase().contains(query) ||
+              tx.trackingId.toUpperCase().contains(query) ||
+              tx.driverName.toUpperCase().contains(query);
+        },
+        itemLabel: (tx) => '${tx.trackingId} · ${tx.plateNumber} · '
+            '${tx.driverName}',
+        onExport: _generatePdf,
+      ),
+    );
+  }
+
+  Future<void> _generatePdf(List<ParkingTransaction> txs) async {
+    try {
+      final dateFmt = DateFormat('MMM d, yyyy');
+      final timeFmt = DateFormat('hh:mm:ss a');
+      final totalFee = txs.fold<double>(0, (s, tx) => s + tx.fee);
+      await PdfExportService.exportTable(
+        title: t('Transaction Logs', 'Mga Transaksyon'),
+        headers: [
+          '#',
+          t('Date', 'Petsa'),
+          t('Time', 'Oras'),
+          t('Tracking ID', 'Tracking ID'),
+          t('Plate', 'Plaka'),
+          t('Driver', 'Driver'),
+          t('Fee', 'Bayad'),
+          t('Status', 'Katayuan'),
+        ],
+        rows: [
+          for (var i = 0; i < txs.length; i++)
+            [
+              '${i + 1}',
+              dateFmt.format(txs[i].timestamp),
+              timeFmt.format(txs[i].timestamp),
+              txs[i].trackingId,
+              txs[i].plateNumber,
+              txs[i].driverName,
+              'PHP ${txs[i].fee.toStringAsFixed(0)}',
+              txs[i].pendingSync
+                  ? t('Syncing', 'Nag-sync')
+                  : t('Paid', 'Bayad'),
+            ],
+        ],
+        summary: [
+          MapEntry(t('Total transactions', 'Kabuuang Transaksyon'),
+              '${txs.length}'),
+          MapEntry(t('Total collected', 'Kabuuang Nakolekta'),
+              'PHP ${totalFee.toStringAsFixed(0)}'),
+        ],
+      );
+      if (mounted) {
+        Toast.success(context, t('PDF sent to share sheet', 'Naipadala ang PDF'));
+      }
+    } catch (e) {
+      if (mounted) {
+        Toast.error(context,
+            t("Couldn't export PDF: $e", 'Hindi na-export ang PDF: $e'));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -32,15 +120,22 @@ class _LogsScreenState extends State<LogsScreen> {
         leading: widget.embedded ? null : const BackButton(),
         title: Text(t('Transaction Logs', 'Mga Transaksyon'),
             style: const TextStyle(fontWeight: FontWeight.w800)),
+        actions: [
+          IconButton(
+            tooltip: t('Export PDF', 'I-export bilang PDF'),
+            onPressed: _exportPdf,
+            icon: const Icon(Icons.picture_as_pdf_rounded),
+          ),
+        ],
       ),
-      body: const TouchGlowOverlay(
-        child: SafeArea(child: TransactionLogView()),
+      body: TouchGlowOverlay(
+        child: SafeArea(child: TransactionLogView(key: _logsKey)),
       ),
     );
   }
 }
 
-enum _TimeFilter { all, today, hour }
+enum _TimeFilter { all, today, hour, month }
 
 /// The actual search + time-filter + full transaction list — every entry
 /// ever logged (last week, yesterday, today, all of it; [allTransactions]
@@ -53,13 +148,39 @@ class TransactionLogView extends StatefulWidget {
   const TransactionLogView({super.key});
 
   @override
-  State<TransactionLogView> createState() => _TransactionLogViewState();
+  State<TransactionLogView> createState() => TransactionLogViewState();
 }
 
-class _TransactionLogViewState extends State<TransactionLogView> {
+/// Public (not `_`-prefixed) so a host screen outside this file — see
+/// AuditScreen's Entries tab — can hold a `GlobalKey<TransactionLogViewState>`
+/// on its embedded [TransactionLogView] and read [visibleTransactions] for
+/// its own "Export PDF" action, same as [LogsScreen] does for its own copy.
+class TransactionLogViewState extends State<TransactionLogView> {
   final _search = TextEditingController();
   _TimeFilter _filter = _TimeFilter.all;
   Timer? _auditDebounce;
+
+  /// Caps how many (already filtered/searched) rows are shown at once —
+  /// null means no cap ("All"). Keeps a long history scannable instead of
+  /// always rendering every matching entry.
+  int? _limit = 20;
+
+  /// Latest rendered rows (search + time filter + Show-count already
+  /// applied) — set (not via setState) from inside the StreamBuilder
+  /// below, purely so a host screen's own "Export PDF" button (see
+  /// LogsScreen._exportPdf) can read exactly what's currently on screen
+  /// without a second Firestore read or re-deriving the filter here. Same
+  /// pattern AuditScreen's own _visibleLogs uses.
+  List<ParkingTransaction> _visibleTxs = const [];
+  List<ParkingTransaction> get visibleTransactions => _visibleTxs;
+
+  /// Every transaction from the live stream, before this widget's own
+  /// search/time filter/Show-count are applied — a host screen's "Export
+  /// PDF" search dialog runs its own independent query across full history
+  /// with this, rather than being limited to whatever's currently filtered
+  /// on screen (see LogsScreen._exportPdf / AuditScreen._exportPdf).
+  List<ParkingTransaction> _allTxs = const [];
+  List<ParkingTransaction> get allTransactions => _allTxs;
 
   // Grabbed once, not called fresh inside build() — the search box's own
   // setState on every keystroke would otherwise hand StreamBuilder a
@@ -106,9 +227,18 @@ class _TransactionLogViewState extends State<TransactionLogView> {
           t.timestamp.isAfter(DateTime(now.year, now.month, now.day)),
         _TimeFilter.hour =>
           t.timestamp.isAfter(now.subtract(const Duration(hours: 1))),
+        _TimeFilter.month =>
+          t.timestamp.isAfter(DateTime(now.year, now.month - 1, now.day)),
       };
       return matchesQuery && matchesTime;
     }).toList();
+  }
+
+  List<ParkingTransaction> _applyLimit(List<ParkingTransaction> txs) {
+    final limit = _limit;
+    return limit == null || txs.length <= limit
+        ? txs
+        : txs.sublist(0, limit);
   }
 
   @override
@@ -136,26 +266,61 @@ class _TransactionLogViewState extends State<TransactionLogView> {
                 ),
               ),
               const SizedBox(height: 10),
-              // Wrap, not Row: on a narrow phone or a bumped-up
-              // accessibility text scale, three chips can outgrow one
-              // line — Wrap drops the extra chip to a second line
-              // instead of overflowing off the right edge.
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final (f, label) in [
-                    (_TimeFilter.all, t('All', 'Lahat')),
-                    (_TimeFilter.today, t('Today', 'Ngayon')),
-                    (_TimeFilter.hour, t('Last hour', 'Huling Oras')),
-                  ])
-                    ChoiceChip(
-                      label: Text(label),
-                      selected: _filter == f,
-                      selectedColor: YosColors.sage,
-                      onSelected: (_) => setState(() => _filter = f),
+              // Both pickers as dropdowns, not a chip row — a chip per
+              // time-filter option outgrew a single line on a narrow phone
+              // even scrolling sideways; a dropdown takes the same width
+              // regardless of how many options it has, so this always sits
+              // on one line next to the "Show" count picker, by request.
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(t('Filter', 'Salain'),
+                        style: TextStyle(
+                            color: YosColors.sub,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    DropdownButton<_TimeFilter>(
+                      value: _filter,
+                      underline: const SizedBox.shrink(),
+                      isDense: true,
+                      items: [
+                        for (final (f, label) in [
+                          (_TimeFilter.all, t('All', 'Lahat')),
+                          (_TimeFilter.today, t('Today', 'Ngayon')),
+                          (_TimeFilter.hour, t('Last Hour', 'Huling Oras')),
+                          (_TimeFilter.month,
+                              t('Last Month', 'Nakaraang Buwan')),
+                        ])
+                          DropdownMenuItem(value: f, child: Text(label)),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _filter = v);
+                      },
                     ),
-                ],
+                    const SizedBox(width: 20),
+                    Text(t('Show', 'Ipakita'),
+                        style: TextStyle(
+                            color: YosColors.sub,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    DropdownButton<int?>(
+                      value: _limit,
+                      underline: const SizedBox.shrink(),
+                      isDense: true,
+                      items: [
+                        for (final n in [10, 20, 50])
+                          DropdownMenuItem(value: n, child: Text('$n')),
+                        DropdownMenuItem(
+                            value: null, child: Text(t('All', 'Lahat'))),
+                      ],
+                      onChanged: (v) => setState(() => _limit = v),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -170,7 +335,10 @@ class _TransactionLogViewState extends State<TransactionLogView> {
               if (!snap.hasData) {
                 return const _LogsSkeleton();
               }
-              final txs = _apply(snap.data!);
+              _allTxs = snap.data!;
+              final filtered = _apply(snap.data!);
+              final txs = _applyLimit(filtered);
+              _visibleTxs = txs;
               if (txs.isEmpty) {
                 return Center(
                   child: Padding(

@@ -104,24 +104,25 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
         _rfidFocus.requestFocus();
         return;
       }
-      final registeredType = VehicleType.fromLabel(match.vehicleType);
-      final type =
-          await confirmVehicleTypeOverride(context, current: registeredType);
+      final variants = await VehicleRegistry.instance.lookupAllByRfid(tag);
       if (!mounted) return;
-      if (type == null) {
+      final resolved = await pickVehicleForRfidTag(context,
+          tag: tag, current: match, variants: variants);
+      if (!mounted) return;
+      if (resolved == null) {
         _rfidFocus.requestFocus();
         return;
       }
       final tx = YosRepository.instance.buildTransaction(
-        driverName: match.driverName,
-        plateNumber: match.plateNumber,
-        type: type,
-        zoneId: match.defaultZoneId,
+        driverName: resolved.driverName,
+        plateNumber: resolved.plateNumber,
+        type: VehicleType.fromLabel(resolved.vehicleType),
+        zoneId: resolved.defaultZoneId,
       );
       HapticFeedback.heavyImpact();
       Toast.success(context,
-          '${match.plateNumber} · ${match.driverName} · ₱${tx.fee.toStringAsFixed(0)}');
-      await _showReceiptDrawer(tx, registered: match);
+          '${resolved.plateNumber} · ${resolved.driverName} · ₱${tx.fee.toStringAsFixed(0)}');
+      await _showReceiptDrawer(tx, registered: resolved);
     } finally {
       _receiptBusy = false;
     }
@@ -150,13 +151,12 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
   }
 
   /// Opens a searchable picker of registered vehicles for one-tap autofill
-  /// — reached by tapping the plate field while it's empty, for a
-  /// collector who'd rather pick a vehicle they've already registered
-  /// than retype its plate/driver every visit. Only fires while the field
-  /// is empty (see the field's own onTap) so it doesn't keep popping back
-  /// up while they're editing what they just typed; closing it without
-  /// picking anything leaves manual typing as the fallback, same as
-  /// before this existed.
+  /// — reached via the plate field's list icon, for a collector who'd
+  /// rather pick a vehicle they've already registered than retype its
+  /// plate/driver every visit. Opt-in only (the field itself always just
+  /// opens the keyboard for typing — see the field's own decoration);
+  /// closing this without picking anything leaves manual typing as the
+  /// fallback, same as before this existed.
   Future<void> _pickRegisteredVehicle() async {
     final picked = await showModalBottomSheet<RegisteredVehicle>(
       context: context,
@@ -328,13 +328,11 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
                                   fontFeatures: const [
                                     FontFeature.tabularFigures()
                                   ]),
-                              // Only while empty — tapping in to fix a typo
-                              // on an already-typed plate shouldn't keep
-                              // reopening the picker (see
+                              // Tapping in always opens the keyboard for
+                              // direct typing — the searchable picker is
+                              // opt-in only, via the list icon below, not
+                              // forced on every tap (see
                               // _pickRegisteredVehicle's own doc comment).
-                              onTap: _plate.text.trim().isEmpty
-                                  ? _pickRegisteredVehicle
-                                  : null,
                               decoration: InputDecoration(
                                 labelText: t('Plate number', 'Plaka Numero'),
                                 hintText: 'ABC1234',
@@ -733,6 +731,13 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
   /// float.
   int? _redeemedTier;
 
+  /// How many physical copies to print this receipt as — e.g. a driver
+  /// asking for a spare copy. Only the paper output loops on this; the
+  /// transaction itself is still committed once (see [_commit]), never
+  /// once per copy.
+  int _copies = 1;
+  static const int _maxCopies = 5;
+
   /// The peso discount actually applied — 0 unless [_redeemedTier] is set.
   double get _redeemedValue =>
       _redeemedTier == null ? 0 : _vehicleFee * _redeemedTier! / 100;
@@ -888,27 +893,37 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
         return;
       }
 
-      await printer.printParkingTicket(
-        trackingId: widget.tx.trackingId,
-        driverName: widget.tx.driverName,
-        plateNumber: widget.tx.plateNumber,
-        vehicleType: widget.tx.vehicleType,
-        zoneId: widget.tx.zoneId,
-        fee: _effectiveFee,
-        timestamp: widget.tx.timestamp,
-        header: kReceiptHeader,
-        footer: kOrdinanceRef,
-        closingLines: _receiptClosingLines,
-        points: _receiptPoints,
-      );
+      for (var i = 0; i < _copies; i++) {
+        await printer.printParkingTicket(
+          trackingId: widget.tx.trackingId,
+          driverName: widget.tx.driverName,
+          plateNumber: widget.tx.plateNumber,
+          vehicleType: widget.tx.vehicleType,
+          zoneId: widget.tx.zoneId,
+          fee: _effectiveFee,
+          timestamp: widget.tx.timestamp,
+          header: kReceiptHeader,
+          footer: kOrdinanceRef,
+          closingLines: _receiptClosingLines,
+          points: _receiptPoints,
+        );
+      }
 
       _commit();
       HapticFeedback.heavyImpact();
       setState(() {
-        _status = t('Printed ✓', 'Naka-print ✓');
+        _status = _copies > 1
+            ? t('Printed x$_copies ✓', 'Naka-print x$_copies ✓')
+            : t('Printed ✓', 'Naka-print ✓');
         _statusOk = true;
       });
-      if (mounted) Toast.success(context, t('Receipt printed', 'Naka-print ang resibo'));
+      if (mounted) {
+        Toast.success(
+            context,
+            _copies > 1
+                ? t('$_copies receipts printed', '$_copies resibo ang naka-print')
+                : t('Receipt printed', 'Naka-print ang resibo'));
+      }
       await Future.delayed(const Duration(milliseconds: 900));
       widget.onDone();
     } catch (e) {
@@ -1047,6 +1062,14 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
               ),
             ),
             const SizedBox(height: 18),
+            _CopiesStepper(
+              copies: _copies,
+              maxCopies: _maxCopies,
+              onChanged: (_saved || _printing)
+                  ? null
+                  : (c) => setState(() => _copies = c),
+            ),
+            const SizedBox(height: 18),
             if (_status != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -1064,6 +1087,83 @@ class _ReceiptPreviewDrawerState extends State<ReceiptPreviewDrawer> {
                     onPressed: _print,
                   ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Plus/minus control for how many physical copies to print — e.g. the
+/// driver wants a spare copy for themselves. Disabled ([onChanged] null)
+/// once the receipt is already saved/printing, matching how
+/// [_RedeemPointsCard] freezes at that point.
+class _CopiesStepper extends StatelessWidget {
+  const _CopiesStepper({
+    required this.copies,
+    required this.maxCopies,
+    required this.onChanged,
+  });
+
+  final int copies;
+  final int maxCopies;
+  final ValueChanged<int>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onChanged != null;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(t('Copies', 'Bilang ng kopya'),
+            style: TextStyle(
+                color: YosColors.sub,
+                fontWeight: FontWeight.w700,
+                fontSize: 14)),
+        const SizedBox(width: 14),
+        _StepperButton(
+          icon: Icons.remove_rounded,
+          onTap: (enabled && copies > 1) ? () => onChanged!(copies - 1) : null,
+        ),
+        SizedBox(
+          width: 36,
+          child: Text('$copies',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: YosColors.ink,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18)),
+        ),
+        _StepperButton(
+          icon: Icons.add_rounded,
+          onTap:
+              (enabled && copies < maxCopies) ? () => onChanged!(copies + 1) : null,
+        ),
+      ],
+    );
+  }
+}
+
+class _StepperButton extends StatelessWidget {
+  const _StepperButton({required this.icon, required this.onTap});
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = onTap != null;
+    return Material(
+      color: active ? YosColors.surfaceHigh : YosColors.surface,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(icon,
+              size: 20,
+              color: active
+                  ? YosColors.accentDeep
+                  : YosColors.sub.withOpacity(0.4)),
         ),
       ),
     );

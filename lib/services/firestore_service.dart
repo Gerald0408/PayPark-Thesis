@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -93,8 +93,8 @@ class YosRepository extends ChangeNotifier {
         logAudit(
           nowOnline ? AuditAction.syncOnline : AuditAction.syncOffline,
           nowOnline
-              ? 'Connection restored” background sync resumed'
-              : 'Connection lost” entering offline logging mode',
+              ? 'Connection restored background sync resumed'
+              : 'Connection lost entering offline logging mode',
         );
       }
     });

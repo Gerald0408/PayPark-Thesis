@@ -2,13 +2,9 @@ import 'package:flutter/material.dart';
 
 /// Vehicle types with fixed municipal ordinance rates (read-only for collector).
 enum VehicleType {
-  tricycle('Tricycle', Icons.electric_rickshaw, 50.0),
-  // Icons below were mismatched to their labels (Van showed a plain car,
-  // Truck showed a shuttle-van) — rotated so each shape actually matches
-  // its name.
-  sedan('Van', Icons.airport_shuttle, 100.0),
-  van('Truck', Icons.local_shipping, 150.0),
-  truck('10 Wheeler Truck', Icons.fire_truck, 200.0);
+  tricycle('Closed Van, Jeep, SUV, Tricycle', Icons.directions_car, 50.0),
+  sedan('Forward/Elf', Icons.local_shipping, 100.0),
+  truck('Trailer Truck/Ten Wheeler Truck', Icons.rv_hookup, 200.0);
 
   const VehicleType(this.label, this.icon, this.fee);
   final String label;
@@ -32,12 +28,18 @@ class Zone {
 const List<Zone> kZones = [
   Zone(id: 'savemore', name: 'Savemore Hub', capacity: 40),
   Zone(id: 'puregold', name: 'Puregold Hub', capacity: 55),
-  Zone(id: 'public_market', name: 'Public Market', capacity: 30),
+  Zone(id: 'public_market', name: 'Red Camia Store (RCS)', capacity: 30),
   Zone(id: 'marson', name: 'Marson', capacity: 25),
 ];
 
 /// Ordinance reference shown in the fee matrix screen.
 const String kOrdinanceRef = 'Municipal Ordinance No. 2024-07';
+
+/// Issuing barangay — printed as the letterhead on every exported PDF (see
+/// PdfExportService) alongside the barangay seal (assets/icon/logo.png).
+const String kOrgName = 'PayPark';
+const String kOrgAddress =
+    'Barangay San Nicolas Poblacion, Concepcion, Tarlac';
 
 /// Fixed loyalty-point redemption tiers, as a **percentage of whatever
 /// this transaction's fee actually is**, ascending — a customer can only

@@ -147,30 +147,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _rfidFocus.requestFocus();
         return;
       }
-      final registeredType = VehicleType.fromLabel(match.vehicleType);
-      final type =
-          await confirmVehicleTypeOverride(context, current: registeredType);
+      final variants = await VehicleRegistry.instance.lookupAllByRfid(tag);
       if (!mounted) return;
-      if (type == null) {
+      final resolved = await pickVehicleForRfidTag(context,
+          tag: tag, current: match, variants: variants);
+      if (!mounted) return;
+      if (resolved == null) {
         _rfidFocus.requestFocus();
         return;
       }
       final tx = YosRepository.instance.buildTransaction(
-        driverName: match.driverName,
-        plateNumber: match.plateNumber,
-        type: type,
-        zoneId: match.defaultZoneId,
+        driverName: resolved.driverName,
+        plateNumber: resolved.plateNumber,
+        type: VehicleType.fromLabel(resolved.vehicleType),
+        zoneId: resolved.defaultZoneId,
       );
       HapticFeedback.heavyImpact();
       Toast.success(context,
-          '${match.plateNumber} · ${match.driverName} · ₱${tx.fee.toStringAsFixed(0)}');
+          '${resolved.plateNumber} · ${resolved.driverName} · ₱${tx.fee.toStringAsFixed(0)}');
       await showModalBottomSheet(
         context: context,
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
         builder: (_) => ReceiptPreviewDrawer(
           tx: tx,
-          registered: match,
+          registered: resolved,
           onDone: () => Navigator.of(context).pop(),
         ),
       );
@@ -329,10 +330,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       FittedBox(
                                         fit: BoxFit.scaleDown,
                                         alignment: Alignment.centerLeft,
-                                        child: Text(
-                                            _isAdmin
-                                                ? t('Admin', 'Tagapangasiwa')
-                                                : t('Collector', 'Kolektor'),
+                                        child: Text(repo.currentUserName,
                                             maxLines: 1,
                                             softWrap: false,
                                             style: text.headlineMedium

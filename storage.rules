@@ -12,16 +12,19 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/collectors/$(request.auth.uid)).data.face_id_enrolled == true;
     }
 
-    // Vehicle document photos (driver's license, OR/CR) — see
+    // Vehicle documents (driver's license, OR/CR) — see
     // VehicleDocumentStorage. Same mandatory Face ID gate as every other
-    // dashboard resource in firestore.rules. Images only, capped well
-    // above what a phone camera capture actually produces so a
+    // dashboard resource in firestore.rules. A captured document is a
+    // one-page PDF (see DocumentPdf), but a plain image is still accepted
+    // for any older local-only capture syncing for the first time. Size
+    // capped well above what either format actually produces so a
     // compromised/buggy client can't dump arbitrary large files here.
     match /vehicle_documents/{plateKey}/{fileName} {
       allow read: if hasFaceId();
       allow write: if hasFaceId()
         && request.resource.size < 15 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType == 'application/pdf');
       allow delete: if hasFaceId();
     }
 

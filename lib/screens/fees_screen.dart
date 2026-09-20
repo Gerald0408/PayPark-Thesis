@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../core/constants.dart';
@@ -433,7 +434,17 @@ class _EditFeeDialogState extends State<_EditFeeDialog> {
               autofocus: true,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(prefixText: '₱ '),
+              // Caps the fee at 6 digits (up to ₱999,999 — already far past
+              // any real municipal parking rate) so a mistyped or pasted
+              // string of digits can't silently save as a runaway or
+              // scientific-notation fee (e.g. "2e+38") — this was actually
+              // happening, visible in the audit trail's activity log.
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+              ],
+              maxLength: 6,
+              decoration: const InputDecoration(
+                  prefixText: '₱ ', counterText: ''),
               onSubmitted: (v) =>
                   Navigator.pop(context, double.tryParse(v.trim())),
             ),
