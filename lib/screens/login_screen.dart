@@ -80,7 +80,7 @@ class LoginScreen extends StatelessWidget {
                                     style: text.displayLarge
                                         ?.copyWith(fontSize: 44)),
                                 TextSpan(
-                                    text: t('back!', 'pagbabalik!'),
+                                    text: t('Back!', 'pagbabalik!'),
                                     style: text.displayLarge?.copyWith(
                                         fontSize: 44,
                                         color: YosColors.accentDeep)),
@@ -142,7 +142,7 @@ class LoginScreen extends StatelessWidget {
                         const SizedBox(height: 18),
                         TextButton(
                           onPressed: () => _goRegister(context),
-                          child: Text(t('New collector? Register',
+                          child: Text(t('New Collector? Register',
                               'Bagong kolektor? Magrehistro')),
                         ),
                       ],

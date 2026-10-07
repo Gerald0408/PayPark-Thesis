@@ -47,15 +47,6 @@ class ProfileScreen extends StatelessWidget {
   }
 }
 
-String _initials(String name) {
-  final parts =
-      name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-  if (parts.isEmpty) return '?';
-  if (parts.length == 1) return parts[0].substring(0, 1).toUpperCase();
-  return (parts.first.substring(0, 1) + parts.last.substring(0, 1))
-      .toUpperCase();
-}
-
 /// Split out from [ProfileScreen] purely so [currentCollectorProfile]'s
 /// stream can be grabbed exactly once, in [State.initState] — see that
 /// getter's own "fresh Stream per call, cache it yourself" doc comment.
@@ -246,7 +237,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
   }
 
   /// Shared avatar circle — a photo (once [Collector.photoUrl] is set) or
-  /// initials otherwise. No self-service edit here: profile photo uploads
+  /// a generic person icon otherwise. No self-service edit here: profile photo uploads
   /// depended on Firebase Storage, which isn't set up for this project, so
   /// the avatar is display-only until/unless that's provisioned.
   Widget _avatar(Collector me, {required double size}) {
@@ -264,11 +255,8 @@ class _ProfileBodyState extends State<_ProfileBody> {
       alignment: Alignment.center,
       child: me.photoUrl != null
           ? null
-          : Text(_initials(me.name),
-              style: TextStyle(
-                  fontSize: size * 0.36,
-                  fontWeight: FontWeight.w800,
-                  color: YosColors.onAccent)),
+          : Icon(Icons.person_rounded,
+              size: size * 0.6, color: YosColors.onAccent),
     );
   }
 
@@ -407,7 +395,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
               const SizedBox(height: 18),
               Divider(height: 1, color: YosColors.glassBorder),
               const SizedBox(height: 16),
-              _profileDetailRow(t('Full name', 'Buong Pangalan'), me.name),
+              _profileDetailRow(t('Full Name', 'Buong Pangalan'), me.name),
               _profileDetailRow(
                   t('Phone', 'Telepono'), me.phone ?? '—'),
               _profileDetailRow(
@@ -458,7 +446,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
           children: [
             Center(child: _avatar(me, size: 72)),
             const SizedBox(height: 16),
-            Text(t('Edit profile', 'I-edit ang Profile'),
+            Text(t('Edit Profile', 'I-edit ang Profile'),
                 style: TextStyle(
                     color: YosColors.ink,
                     fontWeight: FontWeight.w800,
@@ -467,7 +455,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
             TextFormField(
               controller: _name,
               decoration:
-                  InputDecoration(labelText: t('Full name', 'Buong Pangalan')),
+                  InputDecoration(labelText: t('Full Name', 'Buong Pangalan')),
               validator: (v) => (v == null || v.trim().length < 2)
                   ? t('Enter your full name', 'Ilagay ang buong pangalan')
                   : null,

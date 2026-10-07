@@ -34,6 +34,21 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/collectors/$(request.auth.uid)).data.is_admin == true;
     }
 
+    // Driver portal account (see DriverAccountService): a signed-in uid
+    // that a collector granted access to via drivers/{uid}. Deleting that
+    // doc (a PIN reset issues a new account) revokes the old one at once.
+    // Drivers have no collectors/{uid} doc, so every collector-only rule
+    // above stays closed to them.
+    function isDriver() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/drivers/$(request.auth.uid));
+    }
+
+    // The normalized RFID tag the signed-in driver may see data for.
+    function driverTagKey() {
+      return get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data.rfid_tag_key;
+    }
+
     match /collectors/{uid} {
       // Registration writes only the plain profile fields for the caller's
       // own uid — name, username, phone, birthday, plus the two flags below
@@ -288,7 +303,9 @@ service cloud.firestore {
     // RFID points fields (rfid_tag, rfid_tag_key, points) written by
     // VehicleRegistry.register/touch.
     match /registered_vehicles/{plateKey} {
-      allow read: if hasFaceId();
+      // Drivers: only the vehicles enrolled under their own card.
+      allow read: if hasFaceId()
+        || (isDriver() && resource.data.rfid_tag_key == driverTagKey());
       allow create, update: if hasFaceId()
         && request.resource.data.keys().hasOnly([
           'plate_number', 'plate_key', 'driver_name', 'vehicle_type',
@@ -304,16 +321,45 @@ service cloud.firestore {
     // Core dashboard resource — mandatory Face ID gate applies in full:
     // no read, create, or update without hasFaceId().
     match /transactions/{txId} {
-      allow read: if hasFaceId();
+      // Drivers: only transactions charged to their own card.
+      allow read: if hasFaceId()
+        || (isDriver() && resource.data.rfid_tag_key == driverTagKey());
       allow create: if hasFaceId()
         && request.resource.data.keys().hasAll([
           'tracking_id','driver_name','plate_number','vehicle_type',
           'fee','zone_id','timestamp','printed'
         ]);
-      // Only the 'printed' flag may ever change; entries are otherwise final.
+      // Entries are otherwise final: only the 'printed' flag may change, or
+      // a check-out may record the time out — once (it must still be null),
+      // with who checked it out. The fee itself can never be edited.
       allow update: if hasFaceId()
-        && request.resource.data.diff(resource.data)
-             .affectedKeys().hasOnly(['printed']);
+        && (
+          request.resource.data.diff(resource.data)
+            .affectedKeys().hasOnly(['printed'])
+          || (
+            'time_out' in resource.data
+            && resource.data.time_out == null
+            && request.resource.data.time_out is timestamp
+            && request.resource.data.checked_out_by == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['time_out', 'checked_out_by', 'checked_out_by_name',
+                           'extra_hours', 'extra_fee', 'extra_payment_method',
+                           'extra_payment_ref', 'lost_ticket_fee',
+                           'fee', 'discount', 'payment_method', 'payment_ref',
+                           'printed'])
+            // Pay-at-time-out: a time-in ticket (fee still 0) gets its fee
+            // set here, once. A fee already paid can never be changed.
+            && (request.resource.data.fee == resource.data.fee
+                || resource.data.fee == 0)
+            && request.resource.data.fee is number
+            && request.resource.data.fee >= 0
+            // Overtime collected at check-out (see
+            // FeeSettingsService.overtimeFor): a non-negative amount.
+            && (!('extra_fee' in request.resource.data)
+                || (request.resource.data.extra_fee is number
+                    && request.resource.data.extra_fee >= 0))
+          )
+        );
       allow delete: if false;
     }
 
@@ -325,6 +371,72 @@ service cloud.firestore {
     match /audit_logs/{logId} {
       allow read: if hasFaceId();
       allow create: if request.auth != null;
+      allow update, delete: if false;
+    }
+
+    // App error reports (see ErrorLogService). Any signed-in session may
+    // file one — errors happen before Face ID enrollment too — but only
+    // for itself, and only admins can read them back. Append-only.
+    match /error_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if request.auth != null
+        && request.resource.data.user_id == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+          'message', 'stack', 'where', 'fatal', 'platform',
+          'user_id', 'user_name', 'timestamp'
+        ])
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 1000;
+      allow update, delete: if false;
+    }
+
+    // Driver portal grants — one per active driver account, keyed by its
+    // Firebase Auth uid. Collectors create them (DriverAccountService.setPin)
+    // and delete superseded ones; a driver can only read their own.
+    match /drivers/{uid} {
+      allow get: if (request.auth != null && request.auth.uid == uid)
+        || hasFaceId();
+      allow list: if hasFaceId();
+      allow create: if hasFaceId()
+        && request.resource.data.created_by == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+          'rfid_tag_key', 'driver_name', 'created_by', 'created_at'
+        ])
+        && request.resource.data.rfid_tag_key is string;
+      allow delete: if hasFaceId();
+      allow update: if false;
+    }
+
+    // Which synthetic-email version is current for a card, so the portal's
+    // sign-in screen knows which account to try. Readable before sign-in
+    // (by exact card key only — no listing); holds nothing but a counter.
+    match /driver_logins/{tagKey} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if hasFaceId()
+        && request.resource.data.keys().hasOnly(['version', 'updated_at'])
+        && request.resource.data.version is int;
+      allow delete: if false;
+    }
+
+    // Daily blotter (see BlotterService) — a logbook, so append-only like
+    // the paper one: corrections are new entries, never edits. Entries
+    // are signed by the collector who writes them.
+    match /blotter_entries/{entryId} {
+      allow read: if hasFaceId();
+      allow create: if hasFaceId()
+        && request.resource.data.collector_id == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'date_key', 'category', 'description', 'collector_id', 'timestamp'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'date_key', 'category', 'description', 'plate_number', 'zone_id',
+          'collector_id', 'collector_name', 'timestamp'
+        ])
+        && request.resource.data.category in
+             ['incident', 'complaint', 'violation', 'note']
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 500;
       allow update, delete: if false;
     }
   }

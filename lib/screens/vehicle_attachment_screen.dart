@@ -89,6 +89,10 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
   String? _orCrPhotoUrl;
   VehicleType? _detectedType;
 
+  /// OR/CR is optional, so its capture card stays collapsed behind an
+  /// "Add OR/CR" button until tapped — or starts open when one exists.
+  bool _showOrCr = false;
+
   @override
   void initState() {
     super.initState();
@@ -98,6 +102,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
     _orCrPhotoPath = widget.initialOrCrPhotoPath;
     _licensePhotoUrl = widget.initialLicensePhotoUrl;
     _orCrPhotoUrl = widget.initialOrCrPhotoUrl;
+    _showOrCr = _orCrPhotoPath != null || _orCrPhotoUrl != null;
   }
 
   @override
@@ -352,21 +357,52 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                   ),
                 ),
                 const SizedBox(height: 14),
-                PopIn(
-                  delayMs: 60,
-                  child: GlassCard(
-                    child: _DocCaptureCard(
-                      label: 'OR/CR',
-                      photoPath: _orCrPhotoPath,
-                      photoUrl: _orCrPhotoUrl,
-                      onScan: () => _scanDocument(isLicense: false),
-                      onImport: () => _importImage(isLicense: false),
-                      onViewPhoto: (_orCrPhotoPath ?? _orCrPhotoUrl) == null
-                          ? null
-                          : () => _viewPhoto(_orCrPhotoPath, _orCrPhotoUrl),
+                if (_showOrCr)
+                  PopIn(
+                    delayMs: 60,
+                    child: GlassCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _DocCaptureCard(
+                            label: t('OR/CR (optional)', 'OR/CR (opsyonal)'),
+                            photoPath: _orCrPhotoPath,
+                            photoUrl: _orCrPhotoUrl,
+                            onScan: () => _scanDocument(isLicense: false),
+                            onImport: () => _importImage(isLicense: false),
+                            onViewPhoto: (_orCrPhotoPath ?? _orCrPhotoUrl) ==
+                                    null
+                                ? null
+                                : () =>
+                                    _viewPhoto(_orCrPhotoPath, _orCrPhotoUrl),
+                          ),
+                          const SizedBox(height: 6),
+                          // Only collapses the card — a captured OR/CR
+                          // is kept and still saved.
+                          TextButton.icon(
+                            onPressed: () =>
+                                setState(() => _showOrCr = false),
+                            icon: const Icon(Icons.expand_less_rounded),
+                            label: Text(t('Hide OR/CR', 'Itago ang OR/CR')),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  PopIn(
+                    delayMs: 60,
+                    child: OutlinedButton.icon(
+                      onPressed: () => setState(() => _showOrCr = true),
+                      icon: Icon((_orCrPhotoPath ?? _orCrPhotoUrl) == null
+                          ? Icons.add_rounded
+                          : Icons.expand_more_rounded),
+                      label: Text((_orCrPhotoPath ?? _orCrPhotoUrl) == null
+                          ? t('Add OR/CR (optional)',
+                              'Magdagdag ng OR/CR (opsyonal)')
+                          : t('Show OR/CR', 'Ipakita ang OR/CR')),
                     ),
                   ),
-                ),
                 const SizedBox(height: 14),
                 PopIn(
                   delayMs: 120,
@@ -389,7 +425,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                           controller: _driver,
                           textCapitalization: TextCapitalization.words,
                           decoration: InputDecoration(
-                            labelText: t('Full name', 'Buong Pangalan'),
+                            labelText: t('Full Name', 'Buong Pangalan'),
                             hintText: t(
                                 'Filled from license scan — edit if needed',
                                 'Napunan mula sa license scan — i-edit kung kailangan'),
@@ -405,9 +441,9 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                           controller: _plate,
                           textCapitalization: TextCapitalization.characters,
                           decoration: InputDecoration(
-                            labelText: t('Plate number', 'Plaka Numero'),
-                            hintText: t('Scan the plate, OR/CR, or type it in',
-                                'I-scan ang plaka, OR/CR, o i-type ito'),
+                            labelText: t('Plate Number', 'Plaka Numero'),
+                            hintText: t('Scan the plate or type it in',
+                                'I-scan ang plaka o i-type ito'),
                             prefixIcon: const Icon(Icons.pin_outlined),
                             suffixIcon: IconButton(
                               tooltip: t('Scan plate number', 'I-scan ang Plaka Numero'),

@@ -82,6 +82,101 @@ class _FeesScreenState extends State<FeesScreen> {
     }
   }
 
+  Future<void> _editBaseHours() async {
+    final result = await showDialog<double>(
+      context: context,
+      builder: (_) => _EditFeeDialog(
+        type: null,
+        title: t('Hours Covered By Base Fee',
+            'Oras na sakop ng base fee'),
+        initial: FeeSettingsService.instance.baseHours.toDouble(),
+        prefix: '',
+      ),
+    );
+    if (result == null) return;
+    final hours = result.round();
+    if (hours < 1 || hours > 24) {
+      if (mounted) {
+        Toast.error(context,
+            t('Enter 1 to 24 hours.', 'Maglagay ng 1 hanggang 24 na oras.'));
+      }
+      return;
+    }
+    try {
+      await FeeSettingsService.instance.setBaseHours(hours);
+      if (mounted) {
+        Toast.success(
+            context,
+            t('Base Fee now covers $hours Hours',
+                'Sakop na ng base fee ang $hours oras'));
+      }
+    } catch (_) {
+      if (mounted) {
+        Toast.error(context, t("Couldn't save — try again.", 'Hindi na-save — subukan ulit.'));
+      }
+    }
+  }
+
+  Future<void> _editLostTicketFee() async {
+    final result = await showDialog<double>(
+      context: context,
+      builder: (_) => _EditFeeDialog(
+        type: null,
+        title: t('Lost Ticket Fee', 'Bayad sa nawalang ticket'),
+        initial: FeeSettingsService.instance.lostTicketFee,
+      ),
+    );
+    if (result == null) return;
+    if (result < 0) {
+      if (mounted) {
+        Toast.error(context, t('Enter a valid amount.', 'Ilagay ang tamang halaga.'));
+      }
+      return;
+    }
+    try {
+      await FeeSettingsService.instance.setLostTicketFee(result);
+      if (mounted) {
+        Toast.success(context,
+            t('Lost Ticket Fee: ₱${result.toStringAsFixed(0)}', 'Bayad sa nawalang ticket: ₱${result.toStringAsFixed(0)}'));
+      }
+    } catch (_) {
+      if (mounted) {
+        Toast.error(context, t("Couldn't save — try again.", 'Hindi na-save — subukan ulit.'));
+      }
+    }
+  }
+
+  Future<void> _editExtraHour(VehicleType type) async {
+    final result = await showDialog<double>(
+      context: context,
+      builder: (_) => _EditFeeDialog(
+        type: type,
+        title: t('Extra Hours: ${type.label}', 'Dagdag na oras: ${type.label}'),
+        initial: FeeSettingsService.instance.extraHourFeeFor(type),
+      ),
+    );
+    if (result == null) return;
+    if (result < 0) {
+      if (mounted) {
+        Toast.error(context, t('Enter a valid amount.', 'Ilagay ang tamang halaga.'));
+      }
+      return;
+    }
+    try {
+      await FeeSettingsService.instance.setExtraHourFee(type, result);
+      if (mounted) {
+        Toast.success(
+            context,
+            t('${type.label}: ₱${result.toStringAsFixed(0)} per Extra Hours',
+                '${type.label}: ₱${result.toStringAsFixed(0)} bawat dagdag na oras'));
+      }
+    } catch (_) {
+      if (mounted) {
+        Toast.error(context, t("Couldn't save — try again.", 'Hindi na-save — subukan ulit.'));
+      }
+    }
+  }
+
   /// Tapping any fee row — admin or not — opens this details view first,
   /// showing the vehicle type, current rate, and (once it's been edited at
   /// least once) the rate it replaced and when. Editing itself stays
@@ -131,10 +226,10 @@ class _FeesScreenState extends State<FeesScreen> {
                             child: Text(
                               isAdmin
                                   ? t(
-                                      'Rates fixed by $kOrdinanceRef. Tap a rate to update it — changes sync to every device.',
+                                      'Rates Fixed By $kOrdinanceRef. Tap a rate to update it — changes sync to every device.',
                                       'Naka-fix ang mga bayad ayon sa $kOrdinanceRef. I-tap ang isang rate para i-update ito — nag-sync ang mga pagbabago sa lahat ng device.')
                                   : t(
-                                      'Rates fixed by $kOrdinanceRef. View only — ask an admin for changes.',
+                                      'Rates Fixed By $kOrdinanceRef. View only — ask an admin for changes.',
                                       'Naka-fix ang mga bayad ayon sa $kOrdinanceRef. Tingin lang — magtanong sa admin para sa mga pagbabago.'),
                               style: TextStyle(
                                   color: YosColors.ink,
@@ -220,6 +315,13 @@ class _FeesScreenState extends State<FeesScreen> {
                         ),
                       ),
                     ),
+                  const SizedBox(height: 12),
+                  _TimeChargesCard(
+                    isAdmin: isAdmin,
+                    onEditBaseHours: _editBaseHours,
+                    onEditExtra: _editExtraHour,
+                    onEditLostTicket: _editLostTicketFee,
+                  ),
                 ],
               );
             },
@@ -295,7 +397,7 @@ class _FeeDetailsDialog extends StatelessWidget {
                   _detailRow(
                       t('Previous price', 'Dating Presyo'), money.format(previous)),
                 _detailRow(
-                    t('Current rate', 'Kasalukuyang Bayad'), money.format(current)),
+                    t('Current Rate', 'Kasalukuyang Bayad'), money.format(current)),
                 if (updatedAt != null)
                   _detailRow(t('Updated', 'Na-update'),
                       DateFormat('MMM d, y \'at\' h:mm a').format(updatedAt)),
@@ -380,8 +482,15 @@ class _FeeDetailsDialog extends StatelessWidget {
 /// widgets-library "'_dependents.isEmpty': is not true" assertion (a
 /// red screen) as a secondary failure.
 class _EditFeeDialog extends StatefulWidget {
-  const _EditFeeDialog({required this.type});
-  final VehicleType type;
+  const _EditFeeDialog(
+      {required this.type, this.title, this.initial, this.prefix = '₱ '});
+  final VehicleType? type;
+
+  /// Overrides for reusing this dialog beyond the base fee (extra-hour
+  /// rate, base hours). Default: edit [type]'s base fee.
+  final String? title;
+  final double? initial;
+  final String prefix;
 
   @override
   State<_EditFeeDialog> createState() => _EditFeeDialogState();
@@ -389,7 +498,9 @@ class _EditFeeDialog extends StatefulWidget {
 
 class _EditFeeDialogState extends State<_EditFeeDialog> {
   late final _amount = TextEditingController(
-      text: FeeSettingsService.instance.feeFor(widget.type).toStringAsFixed(0));
+      text: (widget.initial ??
+              FeeSettingsService.instance.feeFor(widget.type!))
+          .toStringAsFixed(0));
 
   @override
   void dispose() {
@@ -412,8 +523,8 @@ class _EditFeeDialogState extends State<_EditFeeDialog> {
               children: [
                 Expanded(
                   child: Text(
-                      t('Edit ${widget.type.label} fee',
-                          'I-edit ang bayad para sa ${widget.type.label}'),
+                      widget.title ?? t('Edit ${widget.type!.label} fee',
+                          'I-edit ang bayad para sa ${widget.type!.label}'),
                       style: TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 18,
@@ -443,8 +554,8 @@ class _EditFeeDialogState extends State<_EditFeeDialog> {
                 FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
               ],
               maxLength: 6,
-              decoration: const InputDecoration(
-                  prefixText: '₱ ', counterText: ''),
+              decoration: InputDecoration(
+                  prefixText: widget.prefix, counterText: ''),
               onSubmitted: (v) =>
                   Navigator.pop(context, double.tryParse(v.trim())),
             ),
@@ -471,6 +582,93 @@ class _EditFeeDialogState extends State<_EditFeeDialog> {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Time-based charges: how many hours the base fee covers, and what
+/// each extra hour started after that costs per vehicle type — collected
+/// at check-out (see FeeSettingsService.overtimeFor). Admins tap a value
+/// to change it.
+class _TimeChargesCard extends StatelessWidget {
+  const _TimeChargesCard({
+    required this.isAdmin,
+    required this.onEditBaseHours,
+    required this.onEditExtra,
+    required this.onEditLostTicket,
+  });
+
+  final bool isAdmin;
+  final VoidCallback onEditBaseHours;
+  final ValueChanged<VehicleType> onEditExtra;
+  final VoidCallback onEditLostTicket;
+
+  @override
+  Widget build(BuildContext context) {
+    final fees = FeeSettingsService.instance;
+    Widget row(String label, String value, VoidCallback onTap) => InkWell(
+          onTap: isAdmin ? onTap : null,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(label,
+                      style: TextStyle(
+                          color: YosColors.ink,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600)),
+                ),
+                Text(value,
+                    style: TextStyle(
+                        color: YosColors.ink,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800)),
+                if (isAdmin) ...[
+                  const SizedBox(width: 6),
+                  Icon(Icons.edit_rounded, color: YosColors.sub, size: 18),
+                ],
+              ],
+            ),
+          ),
+        );
+
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.more_time_rounded, color: YosColors.ink),
+              const SizedBox(width: 8),
+              Text(t('Time-Based Charges', 'Bayad Batay sa Oras'),
+                  style: TextStyle(
+                      color: YosColors.ink,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+              t(
+                  'The base fee covers the first ${fees.baseHours} Hours. '
+                      'Each extra hour started after that is charged at Time Out.',
+                  'Sakop ng base fee ang unang ${fees.baseHours} oras. '
+                      'Sisingilin sa paglabas ang bawat dagdag na oras na nasimulan.'),
+              style: TextStyle(color: YosColors.sub, fontSize: 13)),
+          const Divider(height: 20),
+          row(t('Hours Covered By Base Fee', 'Oras na sakop ng base fee'),
+              '${fees.baseHours} Hours', onEditBaseHours),
+          for (final type in VehicleType.values)
+            row(
+                t('Extra Hours · ${type.label}', 'Dagdag na oras · ${type.label}'),
+                '₱${fees.extraHourFeeFor(type).toStringAsFixed(0)}',
+                () => onEditExtra(type)),
+          row(t('Lost Ticket Fee', 'Bayad sa nawalang ticket'),
+              '₱${fees.lostTicketFee.toStringAsFixed(0)}', onEditLostTicket),
         ],
       ),
     );

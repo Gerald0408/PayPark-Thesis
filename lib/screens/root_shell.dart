@@ -151,9 +151,14 @@ class _RootTabs extends StatefulWidget {
 
 class _RootTabsState extends State<_RootTabs> {
   static const _home = 0;
+  static const _printer = 2;
   static const _logout = 3;
 
   int _index = _home;
+
+  /// Admins don't print tickets, so their nav bar leaves the Printer tab
+  /// out entirely.
+  bool _isAdmin = false;
 
   StreamSubscription<Collector?>? _profileSub;
 
@@ -174,6 +179,12 @@ class _RootTabsState extends State<_RootTabs> {
       (c) {
         if (c != null) {
           _sawProfile = true;
+          if (c.isAdmin != _isAdmin && mounted) {
+            setState(() {
+              _isAdmin = c.isAdmin;
+              if (_isAdmin && _index == _printer) _index = _home;
+            });
+          }
         } else if (_sawProfile) {
           _handleAccountRemoved();
         }
@@ -225,10 +236,10 @@ class _RootTabsState extends State<_RootTabs> {
   Future<void> _confirmLogout() async {
     final confirmed = await showAppConfirmDialog(
       context,
-      title: 'Log out?',
+      title: 'Log Out?',
       message: 'You\'ll need to sign in again to start your next '
           'collection.',
-      confirmLabel: 'Log out',
+      confirmLabel: 'Log Out',
       confirmIcon: Icons.logout_rounded,
       confirmColor: YosColors.bad,
     );
@@ -280,7 +291,7 @@ class _RootTabsState extends State<_RootTabs> {
                 // instance is a new object each time instead, so the
                 // normal update path always runs.
                 child: switch (i) {
-                  0 => DashboardScreen(),
+                  0 => DashboardScreen(active: _index == 0),
                   1 => ProfileScreen(),
                   2 => PrinterSettingsScreen(embedded: true),
                   _ => const SizedBox.shrink(), // Logout has no screen.
@@ -292,6 +303,7 @@ class _RootTabsState extends State<_RootTabs> {
       bottomNavigationBar: _FloatingNavBar(
         index: _index,
         onTap: _onTap,
+        showPrinter: !_isAdmin,
       ),
     );
   }
@@ -303,10 +315,19 @@ class _RootTabsState extends State<_RootTabs> {
 /// Material [BottomNavigationBar] can't do the per-item expand-on-select
 /// shape, so this is a small custom widget instead.
 class _FloatingNavBar extends StatelessWidget {
-  const _FloatingNavBar({required this.index, required this.onTap});
+  const _FloatingNavBar({
+    required this.index,
+    required this.onTap,
+    required this.showPrinter,
+  });
 
+  /// Tab id of the selected item — its position in [_items], which stays
+  /// fixed even when [showPrinter] drops the Printer item from view.
   final int index;
   final ValueChanged<int> onTap;
+  final bool showPrinter;
+
+  static const _printerId = 2;
 
   static const _items = [
     (icon: Icons.home_rounded, label: 'Home'),
@@ -327,7 +348,7 @@ class _FloatingNavBar extends StatelessWidget {
       case 'Printer':
         return t('Printer', 'Printer');
       case 'Logout':
-        return t('Logout', 'Mag-log out');
+        return t('Log Out', 'Mag-log Out');
       default:
         return en;
     }
@@ -355,6 +376,10 @@ class _FloatingNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ids = [
+      for (var i = 0; i < _items.length; i++)
+        if (showPrinter || i != _printerId) i,
+    ];
     return SafeArea(
       minimum: const EdgeInsets.fromLTRB(20, 0, 20, 10),
       child: Container(
@@ -382,8 +407,8 @@ class _FloatingNavBar extends StatelessWidget {
             // selected included — means RenderFlex treats all of them as
             // fully inflexible, sized to their own natural content width
             // rather than one of them being stretched to fill the row.
-            for (var i = 0; i < _items.length; i++) ...[
-              if (i != 0) const SizedBox(width: 6),
+            for (final i in ids) ...[
+              if (i != ids.first) const SizedBox(width: 6),
               Flexible(
                 flex: 0,
                 fit: FlexFit.loose,

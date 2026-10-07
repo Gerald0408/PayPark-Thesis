@@ -15,6 +15,7 @@ import '../services/points_settings_service.dart';
 import '../services/registry_service.dart';
 import '../services/vehicle_document_cache.dart';
 import '../widgets/app_dialog.dart';
+import '../widgets/driver_pin_dialog.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/toast.dart';
 import '../widgets/glow_effects.dart';
@@ -38,6 +39,10 @@ class RegistryScreen extends StatefulWidget {
 
 class _RegistryScreenState extends State<RegistryScreen> {
   final _search = TextEditingController();
+  // Autofocused so a plug-and-play USB RFID reader (a USB-HID keyboard
+  // that "types" the tag then Enter) lands its scan straight in the search
+  // box — same approach as RfidPointsScreen's search field.
+  final _searchFocus = FocusNode();
   _SortMode _sort = _SortMode.entriesDesc;
   bool _transferringPhotos = false;
   bool _fabOpen = false;
@@ -69,16 +74,33 @@ class _RegistryScreenState extends State<RegistryScreen> {
   @override
   void dispose() {
     _search.dispose();
+    _searchFocus.dispose();
     super.dispose();
+  }
+
+  /// Enter in the search box — which is how a USB RFID reader ends a scan.
+  /// Here a scan is only a search: the tag stays in the box to filter the
+  /// list down to that vehicle (receipts are the Dashboard/Vehicle Entry's
+  /// job). Selected so the next scan replaces it instead of appending.
+  void _onSearchSubmitted(String _) {
+    _search.selection =
+        TextSelection(baseOffset: 0, extentOffset: _search.text.length);
+    _searchFocus.requestFocus();
   }
 
   List<RegisteredVehicle> _apply(List<RegisteredVehicle> list) {
     final q = _search.text.trim().toUpperCase();
+    // Tags compare by their normalized key (same as lookupByRfid), so a
+    // reader that emits spaces/dashes still matches the stored tag.
+    final tagQ = RegisteredVehicle.normalize(q);
     final out = (q.isEmpty
             ? list
             : list.where((v) =>
                 v.plateNumber.toUpperCase().contains(q) ||
-                v.driverName.toUpperCase().contains(q)))
+                v.driverName.toUpperCase().contains(q) ||
+                (tagQ.isNotEmpty &&
+                    v.rfidTag != null &&
+                    RegisteredVehicle.normalize(v.rfidTag!).contains(tagQ))))
         .toList();
     switch (_sort) {
       case _SortMode.entriesDesc:
@@ -185,19 +207,19 @@ class _RegistryScreenState extends State<RegistryScreen> {
         if (_fabOpen) ...[
           _fabOption(
             icon: Icons.download_rounded,
-            label: t('Import photos', 'I-import ang larawan'),
+            label: t('Import Photos', 'I-import ang larawan'),
             onTap: _importPhotos,
           ),
           const SizedBox(height: 10),
           _fabOption(
             icon: Icons.ios_share_rounded,
-            label: t('Export photos', 'I-export ang larawan'),
+            label: t('Export Photos', 'I-export ang larawan'),
             onTap: _exportPhotos,
           ),
           const SizedBox(height: 10),
           _fabOption(
             icon: Icons.directions_car_filled_rounded,
-            label: t('Register vehicle', 'Magrehistro ng sasakyan'),
+            label: t('Register Vehicle', 'Magrehistro ng sasakyan'),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => const RegisterVehicleScreen())),
           ),
@@ -332,10 +354,13 @@ class _RegistryScreenState extends State<RegistryScreen> {
                             Expanded(
                               child: TextField(
                                 controller: _search,
+                                focusNode: _searchFocus,
+                                autofocus: true,
                                 textInputAction: TextInputAction.search,
+                                onSubmitted: _onSearchSubmitted,
                                 decoration: InputDecoration(
-                                  hintText: t('Search vehicle or driver',
-                                      'Maghanap ng sasakyan o driver'),
+                                  hintText: t('Search vehicle, driver or RFID',
+                                      'Maghanap ng sasakyan, driver o RFID'),
                                   prefixIcon: const Icon(Icons.search_rounded),
                                   suffixIcon: _search.text.isEmpty
                                       ? null
@@ -405,9 +430,9 @@ class _SortButton extends StatelessWidget {
   final ValueChanged<_SortMode> onChanged;
 
   static Map<_SortMode, String> get _labels => {
-        _SortMode.entriesDesc: t('Most entries', 'Pinakamaraming Entry'),
-        _SortMode.nameAsc: t('Driver name', 'Pangalan ng Driver'),
-        _SortMode.newest: t('Newest first', 'Pinakabago'),
+        _SortMode.entriesDesc: t('Most Entries', 'Pinakamaraming Entry'),
+        _SortMode.nameAsc: t('Driver Name', 'Pangalan ng Driver'),
+        _SortMode.newest: t('Newest First', 'Pinakabago'),
       };
 
   @override
@@ -481,10 +506,10 @@ class _StatStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final stats = [
-      ('$total', t('Total vehicles', 'Kabuuang Sasakyan')),
-      ('$entries', t('Total entries', 'Kabuuang Entry')),
+      ('$total', t('Total Vehicles', 'Kabuuang Sasakyan')),
+      ('$entries', t('Total Entries', 'Kabuuang Entry')),
       ('$frequent', t('Frequent', 'Madalas')),
-      ('$newThisWeek', t('New this week', 'Bago Ngayong Linggo')),
+      ('$newThisWeek', t('New This Week', 'Bago Ngayong Linggo')),
     ];
     // Deliberately no card here: this is a plain summary strip, not a
     // content row, and boxing it made it compete visually with the list
@@ -817,7 +842,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
         text: e?.plateNumber ?? widget.initialPlate ?? '');
     _rfid = TextEditingController(text: e?.rfidTag ?? '');
     _type =
-        e == null ? VehicleType.tricycle : VehicleType.fromLabel(e.vehicleType);
+        e == null ? VehicleType.car : VehicleType.fromLabel(e.vehicleType);
     _zone = e?.defaultZoneId ?? kZones.first.id;
     _licensePhotoPath = e?.driverLicensePhotoPath;
     _orCrPhotoPath = e?.orCrPhotoPath;
@@ -976,8 +1001,8 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
         leading: const BackButton(),
         title: Text(
             editing
-                ? t('Edit vehicle', 'I-edit ang Sasakyan')
-                : t('Register vehicle', 'Magrehistro ng Sasakyan'),
+                ? t('Edit Vehicle', 'I-edit ang Sasakyan')
+                : t('Register Vehicle', 'Magrehistro ng Sasakyan'),
             style: const TextStyle(fontWeight: FontWeight.w800)),
         actions: [
           if (editing)
@@ -996,7 +1021,6 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                 PopIn(
                   child: _AttachmentButton(
                     hasLicense: _licensePhotoPath != null,
-                    hasOrCr: _orCrPhotoPath != null,
                     driverName: _driver.text,
                     plateNumber: _plate.text,
                     onTap: _openAttachment,
@@ -1009,7 +1033,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(t('Vehicle type', 'Uri ng Sasakyan'),
+                        Text(t('Vehicle Type', 'Uri ng Sasakyan'),
                             style: TextStyle(
                                 color: YosColors.ink,
                                 fontWeight: FontWeight.w800,
@@ -1046,7 +1070,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(t('Default zone', 'Default na Zone'),
+                        Text(t('Default Zone', 'Default na Zone'),
                             style: TextStyle(
                                 color: YosColors.ink,
                                 fontWeight: FontWeight.w800,
@@ -1112,12 +1136,27 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                           const SizedBox(height: 10),
                           Text(
                               t(
-                                  '${formatPoints(widget.existing!.points)} points balance',
+                                  '${formatPoints(widget.existing!.points)} Points Balances',
                                   '${formatPoints(widget.existing!.points)} balanse ng points'),
                               style: TextStyle(
                                   color: YosColors.accentDeep,
                                   fontWeight: FontWeight.w800,
                                   fontSize: 13)),
+                          const SizedBox(height: 12),
+                          // Portal access for the card already saved on
+                          // this vehicle (not whatever is typed above).
+                          OutlinedButton.icon(
+                            onPressed: () => showDialog<void>(
+                              context: context,
+                              builder: (_) => DriverPinDialog(
+                                rfidTag: widget.existing!.rfidTag!,
+                                driverName: widget.existing!.driverName,
+                              ),
+                            ),
+                            icon: const Icon(Icons.pin_rounded),
+                            label: Text(t('Driver portal PIN',
+                                'PIN para sa driver portal')),
+                          ),
                         ],
                       ],
                     ),
@@ -1130,7 +1169,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                     : BreathingGlowButton(
                         label: editing
                             ? t('Save changes', 'I-save ang mga Pagbabago')
-                            : t('Register vehicle', 'Magrehistro ng Sasakyan'),
+                            : t('Register Vehicle', 'Magrehistro ng Sasakyan'),
                         icon: Icons.check_rounded,
                         onPressed: _save,
                       ),
@@ -1139,7 +1178,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                   Center(
                     child: Text(
                       t(
-                          '${widget.existing!.entryCount} total entries · registered ${DateFormat('MMM d, y').format(widget.existing!.registeredAt)}',
+                          '${widget.existing!.entryCount} total entries · Registered ${DateFormat('MMM d, y').format(widget.existing!.registeredAt)}',
                           '${widget.existing!.entryCount} kabuuang entry · narehistro noong ${DateFormat('MMM d, y').format(widget.existing!.registeredAt)}'),
                       style: TextStyle(color: YosColors.sub, fontSize: 12),
                     ),
@@ -1160,22 +1199,20 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
 class _AttachmentButton extends StatelessWidget {
   const _AttachmentButton({
     required this.hasLicense,
-    required this.hasOrCr,
     required this.driverName,
     required this.plateNumber,
     required this.onTap,
   });
 
   final bool hasLicense;
-  final bool hasOrCr;
   final String driverName;
   final String plateNumber;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    // OR/CR is optional — only the license, name and plate gate "complete".
     final complete = hasLicense &&
-        hasOrCr &&
         driverName.trim().isNotEmpty &&
         plateNumber.trim().isNotEmpty;
     return GlassCard(
@@ -1207,8 +1244,8 @@ class _AttachmentButton extends StatelessWidget {
                 Text(
                     complete
                         ? '$driverName · $plateNumber'
-                        : t("Scan driver's license and OR/CR",
-                            "I-scan ang driver's license at OR/CR"),
+                        : t("Scan driver's license",
+                            "I-scan ang driver's license"),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

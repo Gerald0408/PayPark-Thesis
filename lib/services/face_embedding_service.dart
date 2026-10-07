@@ -4,7 +4,7 @@ import 'dart:ui';
 
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
-import 'package:tflite_flutter/tflite_flutter.dart';
+import 'tflite_interpreter.dart';
 
 /// MobileFaceNet-based face embedding engine — the collector app's real
 /// Face ID matching algorithm, replacing the earlier landmark-geometry

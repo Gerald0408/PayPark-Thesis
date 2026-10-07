@@ -180,7 +180,7 @@ class _PasswordLoginScreenState extends State<PasswordLoginScreen> {
                                     style: text.displayLarge
                                         ?.copyWith(fontSize: 40)),
                                 TextSpan(
-                                    text: t('password', 'ang password'),
+                                    text: t('Password', 'ang password'),
                                     style: text.displayLarge?.copyWith(
                                         fontSize: 40,
                                         color: YosColors.accentDeep)),
@@ -314,7 +314,7 @@ class _PasswordLoginScreenState extends State<PasswordLoginScreen> {
                                           ),
                                         )
                                       : BreathingGlowButton(
-                                          label: t('Sign in', 'Mag-sign in'),
+                                          label: t('Sign In', 'Mag-sign in'),
                                           icon: Icons.login_rounded,
                                           onPressed: _submit,
                                         ),

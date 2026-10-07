@@ -1,20 +1,42 @@
 import 'package:flutter/material.dart';
 
-/// Vehicle types with fixed municipal ordinance rates (read-only for collector).
+/// Vehicle types and their default rates (local mall/commercial-hub
+/// benchmark): the base fee covers the first [kDefaultBaseHours] hours,
+/// then [extraHourFee] per hour started after that. Admins can change all
+/// of these in Fee Matrix (FeeSettingsService) — these are only the
+/// starting values.
+///
+/// New enum names (not the old tricycle/sedan/truck) on purpose: fee
+/// overrides in settings/fees are keyed by name, so the old types' saved
+/// overrides can't silently replace these new rates.
 enum VehicleType {
-  tricycle('Closed Van, Jeep, SUV, Tricycle', Icons.directions_car, 50.0),
-  sedan('Forward/Elf', Icons.local_shipping, 100.0),
-  truck('Trailer Truck/Ten Wheeler Truck', Icons.rv_hookup, 200.0);
+  motorcycle('Motorcycle / Scooter', Icons.two_wheeler, 20.0, 10.0),
+  car('Sedan / Hatchback / SUV', Icons.directions_car, 40.0, 15.0),
+  van('Delivery Van / Light Truck', Icons.local_shipping, 60.0, 25.0);
 
-  const VehicleType(this.label, this.icon, this.fee);
+  const VehicleType(this.label, this.icon, this.fee, this.extraHourFee);
   final String label;
   final IconData icon;
+
+  /// Default base fee — covers the first [kDefaultBaseHours] hours.
   final double fee;
 
-  static VehicleType fromLabel(String label) => VehicleType.values.firstWhere(
-        (v) => v.label == label,
-        orElse: () => VehicleType.sedan,
-      );
+  /// Default charge per hour started past the base hours.
+  final double extraHourFee;
+
+  /// Labels saved on transactions/registered vehicles before the current
+  /// types existed, mapped to the closest current type.
+  static const _legacyLabels = {
+    'Closed Van, Jeep, SUV, Tricycle': VehicleType.car,
+    'Forward/Elf': VehicleType.van,
+    'Trailer Truck/Ten Wheeler Truck': VehicleType.van,
+    'Sedan': VehicleType.car,
+  };
+
+  static VehicleType fromLabel(String label) =>
+      VehicleType.values.where((v) => v.label == label).firstOrNull ??
+      _legacyLabels[label] ??
+      VehicleType.car;
 }
 
 /// Commercial parking zones monitored by the collector.
@@ -75,3 +97,17 @@ const List<String> kReceiptFooter = [
   'THANK YOU FOR PARKING WITH US!',
   'HAVE A GREAT DAY!',
 ];
+
+/// Where drivers sign in to see their points and parking history — the
+/// Firebase Hosting site for this project (see web_driver/ and
+/// lib/main_driver.dart). Shown to collectors when they set up a PIN.
+const String kDriverPortalUrl = 'concepcion-pay-parking.web.app';
+
+/// Default hours the check-in fee covers before extra-hour charges start
+/// — admins can change it in Fee Matrix (FeeSettingsService.baseHours).
+const int kDefaultBaseHours = 3;
+
+/// Default charge for a lost time-in ticket, printed on every ticket and
+/// added at time out when the driver can't present it — admins can
+/// change it in Fee Matrix (FeeSettingsService.lostTicketFee).
+const double kDefaultLostTicketFee = 100.0;

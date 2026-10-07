@@ -4,25 +4,27 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
-import '../core/constants.dart';
 import '../core/theme.dart';
+import '../core/names.dart';
+import '../dev/dev_flags.dart';
+import '../dev/pricing_test_screen.dart';
 import '../models/access_request.dart';
 import '../models/transaction.dart';
 import '../services/firestore_service.dart';
 import '../services/locale_controller.dart';
-import '../services/registry_service.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
 import '../widgets/odometer_counter.dart';
 import '../widgets/reset_password_dialog.dart';
-import '../widgets/toast.dart';
-import '../widgets/vehicle_type_override_dialog.dart';
 import 'access_requests_screen.dart';
 import 'audit_screen.dart';
+import 'blotter_screen.dart';
+import 'error_logs_screen.dart';
 import 'fees_screen.dart';
 import 'logs_screen.dart';
 import 'registry_screen.dart';
 import 'rfid_points_screen.dart';
+import 'rfid_scan_screen.dart';
 import 'vehicle_entry_screen.dart';
 
 // NOTE: This file was accidentally overwritten with placeholder content
@@ -36,13 +38,18 @@ import 'vehicle_entry_screen.dart';
 // Please give that one a look.
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({super.key, this.active = true});
+
+  /// Whether this is RootShell's currently selected tab — used to hand
+  /// focus back to the hidden RFID capture field on returning to it.
+  final bool active;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen>
+    with WidgetsBindingObserver {
   final repo = YosRepository.instance;
   bool _isAdmin = false;
   List<AccessRequest> _pendingRequests = const [];
@@ -55,11 +62,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final _rfid = TextEditingController();
   final _rfidFocus = FocusNode();
 
-  /// True from the moment a tag resolves to a match until its receipt
-  /// sheet closes — blocks a second scan from opening a second sheet (or
-  /// double-writing a transaction) while the first one is still being
-  /// confirmed/printed. See _onRfidScanned.
-  bool _receiptBusy = false;
 
   // Grabbed exactly once, not called fresh inside build() — this screen
   // rebuilds often (admin status, sync status, pending requests), and
@@ -76,6 +78,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     repo.addListener(_onChange);
     _adminSub = repo.currentUserIsAdmin.listen(
       (v) {
@@ -111,7 +114,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _onChange() => setState(() {});
 
   @override
+  void didUpdateWidget(DashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Back on the Home tab — e.g. from Printer, where connecting a
+    // Bluetooth printer took focus away from the capture field.
+    if (widget.active && !oldWidget.active) _reclaimRfidFocus();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Android's Bluetooth pairing/permission popups background the app
+    // briefly, which can drop the capture field's text-input connection.
+    if (state == AppLifecycleState.resumed) _reclaimRfidFocus();
+  }
+
+  /// Re-attaches the hidden RFID capture field so the next card tap reaches
+  /// [_onRfidScanned]. Unfocus-then-refocus rather than a bare
+  /// requestFocus: Flutter can still consider the field focused after
+  /// Android has dropped its input connection, and requestFocus on an
+  /// already-focused node is a no-op that wouldn't reconnect it.
+  void _reclaimRfidFocus() {
+    if (_isAdmin || !widget.active) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.active) return;
+      if (ModalRoute.of(context)?.isCurrent == false) return;
+      _rfidFocus.unfocus();
+      _rfidFocus.requestFocus();
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     repo.removeListener(_onChange);
     _adminSub?.cancel();
     _requestsSub?.cancel();
@@ -120,72 +154,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  /// Same lookup-and-open-receipt flow as
-  /// VehicleEntryScreen._onRfidScanned — kept here too so a tap works
-  /// straight from the dashboard for a Collector. Admin's job here is
-  /// oversight/editing (fees, points rate, collectors), never the
-  /// day-to-day scan/log/print work, so this bails out for an admin
+  /// A card tapped on the dashboard routes to the Scan RFID Card screen,
+  /// which handles the lookup and receipt there — so every card scan
+  /// happens in one place, and the collector is already on the scan
+  /// screen for the next car. Admin's job here is oversight/editing, never
+  /// the day-to-day scan/log/print work, so this bails out for an admin
   /// session even though the capture field below is already never built
   /// for one — a defensive second guard, not the only one.
   Future<void> _onRfidScanned(String raw) async {
     final tag = raw.trim();
     _rfid.clear();
     if (tag.isEmpty || _isAdmin) return;
-    if (_receiptBusy) {
-      Toast.warn(context,
-          t('Finish the current receipt first.', 'Tapusin muna ang kasalukuyang resibo.'));
-      return;
-    }
-    _receiptBusy = true;
-    try {
-      final match = await VehicleRegistry.instance.lookupByRfid(tag);
-      if (!mounted) return;
-      if (match == null) {
-        Toast.error(context,
-            t('No vehicle enrolled with tag "$tag".',
-                'Walang sasakyang naka-enroll sa tag na "$tag".'));
-        _rfidFocus.requestFocus();
-        return;
-      }
-      final variants = await VehicleRegistry.instance.lookupAllByRfid(tag);
-      if (!mounted) return;
-      final resolved = await pickVehicleForRfidTag(context,
-          tag: tag, current: match, variants: variants);
-      if (!mounted) return;
-      if (resolved == null) {
-        _rfidFocus.requestFocus();
-        return;
-      }
-      final tx = YosRepository.instance.buildTransaction(
-        driverName: resolved.driverName,
-        plateNumber: resolved.plateNumber,
-        type: VehicleType.fromLabel(resolved.vehicleType),
-        zoneId: resolved.defaultZoneId,
-      );
-      HapticFeedback.heavyImpact();
-      Toast.success(context,
-          '${resolved.plateNumber} · ${resolved.driverName} · ₱${tx.fee.toStringAsFixed(0)}');
-      await showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (_) => ReceiptPreviewDrawer(
-          tx: tx,
-          registered: resolved,
-          onDone: () => Navigator.of(context).pop(),
-        ),
-      );
-      if (mounted) _rfidFocus.requestFocus();
-    } finally {
-      _receiptBusy = false;
-    }
+    // The hidden capture field can keep Android's text-input connection
+    // even while another screen (e.g. Registered Vehicles) is pushed on
+    // top, so a scan meant for that screen would otherwise land here.
+    // Only act when the dashboard itself is showing.
+    if (!widget.active || ModalRoute.of(context)?.isCurrent == false) return;
+    await _open(RfidScanScreen(initialTag: tag));
+  }
+
+  /// Pushes [screen] and, once it's popped, hands focus back to the hidden
+  /// RFID capture field — the pushed screen may have taken focus (e.g.
+  /// Registered Vehicles' autofocused search), and nothing else restores
+  /// it, so the next card tap here would otherwise go nowhere.
+  Future<void> _open(Widget screen) async {
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => screen));
+    if (mounted) _reclaimRfidFocus();
   }
 
   String _greeting() {
     final h = DateTime.now().hour;
-    if (h < 12) return t('Good morning', 'Magandang Umaga');
-    if (h < 18) return t('Good afternoon', 'Magandang Hapon');
-    return t('Good evening', 'Magandang Gabi');
+    final role = _isAdmin ? t('Admin', 'Admin') : t('Collector', 'Kolektor');
+    if (h < 12) return '${t('Good Morning', 'Magandang Umaga')}, $role';
+    if (h < 18) return '${t('Good Afternoon', 'Magandang Hapon')}, $role';
+    return '${t('Good Evening', 'Magandang Gabi')}, $role';
   }
 
   @override
@@ -250,7 +253,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 builder: (context, snap) {
                   final txs = snap.data ?? const <ParkingTransaction>[];
                   final pending = txs.where((t) => t.pendingSync).length;
-                  final revenue = txs.fold<double>(0, (s, t) => s + t.fee);
+                  final revenue = txs.fold<double>(0, (s, t) => s + t.totalPaid);
                   const goal = 60;
                   final ringVal = (txs.length / goal).clamp(0.0, 1.0);
 
@@ -330,7 +333,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       FittedBox(
                                         fit: BoxFit.scaleDown,
                                         alignment: Alignment.centerLeft,
-                                        child: Text(repo.currentUserName,
+                                        child: Text(
+                                            _titleCase(repo.currentUserName),
                                             maxLines: 1,
                                             softWrap: false,
                                             style: text.headlineMedium
@@ -512,7 +516,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               // same shape ink already tracks — it's only
                               // the hero itself that inverts that, and this
                               // label isn't inside the hero.
-                              child: Text(t('Quick actions', 'Mabilisang Aksyon'),
+                              child: Text(t('Quick Actions', 'Mabilisang Aksyon'),
                                   style: TextStyle(
                                       color: YosColors.ink,
                                       fontWeight: FontWeight.w800,
@@ -571,40 +575,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _NavTile(
           icon: Icons.receipt_long_rounded,
           title: t('Transaction Logs', 'Mga Log ng Transaksyon'),
-          onTap: () => Navigator.of(context)
-              .push(MaterialPageRoute(builder: (_) => const LogsScreen())),
+          onTap: () => _open(const LogsScreen()),
         ),
         _NavTile(
           icon: Icons.request_quote_rounded,
           title: t('Fee Matrix', 'Talaan ng Bayarin'),
-          onTap: () => Navigator.of(context)
-              .push(MaterialPageRoute(builder: (_) => const FeesScreen())),
+          onTap: () => _open(const FeesScreen()),
         ),
         _NavTile(
           icon: Icons.security_rounded,
           title: t('Audit Trail', 'Talaan ng Audit'),
-          onTap: () => Navigator.of(context)
-              .push(MaterialPageRoute(builder: (_) => const AuditScreen())),
+          onTap: () => _open(const AuditScreen()),
         ),
         if (!_isAdmin)
           _NavTile(
             icon: Icons.directions_car_filled_rounded,
             title: t('Registered Vehicles', 'Mga Nakarehistrong Sasakyan'),
-            onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const RegistryScreen())),
+            onTap: () => _open(const RegistryScreen()),
           ),
         _NavTile(
           icon: Icons.loyalty_rounded,
           title: t('RFID Points', 'RFID Points'),
-          onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const RfidPointsScreen())),
+          onTap: () => _open(const RfidPointsScreen()),
         ),
         if (!_isAdmin)
           _NavTile(
-            icon: Icons.receipt_rounded,
-            title: t('Print Receipt', 'I-print ang Resibo'),
-            onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const VehicleEntryScreen())),
+            icon: Icons.contactless_rounded,
+            title: t('Scan RFID Card', 'I-scan ang RFID Card'),
+            onTap: () => _open(const RfidScanScreen()),
+          ),
+        if (!_isAdmin)
+          _NavTile(
+            icon: Icons.edit_note_rounded,
+            title: t('Manual Entry', 'Manu-manong Entry'),
+            onTap: () => _open(const VehicleEntryScreen()),
+          ),
+        _NavTile(
+          icon: Icons.menu_book_rounded,
+          title: t('Daily Blotter', 'Blotter'),
+          onTap: () => _open(const BlotterScreen()),
+        ),
+        // TEMPORARY — see lib/dev/dev_flags.dart.
+        if (kEnablePricingTestTool)
+          _NavTile(
+            icon: Icons.science_rounded,
+            title: t('Pricing Test', 'Pricing Test'),
+            onTap: () => _open(const PricingTestScreen()),
+          ),
+        if (_isAdmin)
+          _NavTile(
+            icon: Icons.bug_report_rounded,
+            title: t('Error Logs', 'Mga Error Log'),
+            onTap: () => _open(const ErrorLogsScreen()),
           ),
       ];
 }
@@ -680,11 +702,11 @@ class _TodayCollectionsState extends State<_TodayCollections> {
                 return FutureBuilder<List<ParkingTransaction>>(
                   future: _pastDayTx(i - 1),
                   builder: (context, snap) => _CollectionsPage(
-                    label: t("Today's collections", 'Koleksyon Ngayong Araw'),
+                    label: t("Today's Collections", 'Koleksyon Ngayong Araw'),
                     revenue: widget.todayRevenue,
                     pending: widget.todayPending,
                     previousRevenue:
-                        snap.data?.fold<double>(0, (s, t) => s + t.fee),
+                        snap.data?.fold<double>(0, (s, t) => s + t.totalPaid),
                   ),
                 );
               }
@@ -706,10 +728,10 @@ class _TodayCollectionsState extends State<_TodayCollections> {
                     );
                   }
                   final txs = results[0];
-                  final revenue = txs.fold<double>(0, (s, t) => s + t.fee);
+                  final revenue = txs.fold<double>(0, (s, t) => s + t.totalPaid);
                   final dayStart = _dateForPage(i);
                   final previousRevenue = i > 0
-                      ? results[1].fold<double>(0, (s, t) => s + t.fee)
+                      ? results[1].fold<double>(0, (s, t) => s + t.totalPaid)
                       : null;
                   return _CollectionsPage(
                     label: DateFormat('MMM d').format(dayStart),
@@ -1059,6 +1081,10 @@ class _NavTile extends StatelessWidget {
   }
 }
 
+/// "JUAN DELA CRUZ" / "juan dela cruz" → "Juan Dela Cruz", however the name
+/// was typed in when the account was created.
+String _titleCase(String s) => formatPersonName(s);
+
 /// Dashboard-level notification listing each collector who's filed a
 /// "help me back in" ping (see AccessRequest), with a "Reset password"
 /// button right on the name — no need to open the full Access requests
@@ -1108,7 +1134,7 @@ class _PendingResetsCard extends StatelessWidget {
                     child: Text(
                         r.name.isEmpty
                             ? t('(no name given)', '(walang pangalan)')
-                            : r.name,
+                            : _titleCase(r.name),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1125,7 +1151,7 @@ class _PendingResetsCard extends StatelessWidget {
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
-                    child: Text(t('Reset password', 'I-reset ang Password'),
+                    child: Text(t('Reset Password', 'I-reset ang Password'),
                         style: const TextStyle(fontSize: 12)),
                   ),
                 ],

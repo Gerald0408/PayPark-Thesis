@@ -8,6 +8,7 @@ import 'core/responsive.dart';
 import 'core/theme.dart';
 import 'screens/root_shell.dart';
 import 'screens/splash_screen.dart';
+import 'services/error_log_service.dart';
 import 'services/fee_settings_service.dart';
 import 'services/firestore_service.dart';
 import 'services/locale_controller.dart';
@@ -23,6 +24,8 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  // Capture every uncaught error to error_logs from here on.
+  ErrorLogService.instance.init();
   try {
     await YosRepository.instance.init();
   } catch (e) {

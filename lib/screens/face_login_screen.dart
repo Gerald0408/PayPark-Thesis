@@ -212,13 +212,13 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
     final usePassword = await showAppConfirmDialog(
       context,
       barrierDismissible: false,
-      title: t('Not recognized', 'Hindi Nakilala'),
+      title: t('Not Recognized', 'Hindi Nakilala'),
       message: t(
           'We couldn\'t match your face this time. You can sign in '
           'with your password instead.',
           'Hindi namin natugma ang iyong mukha ngayon. Puwede kang mag-sign '
           'in gamit ang iyong password.'),
-      confirmLabel: t('Type password instead', 'I-type na lang ang password'),
+      confirmLabel: t('Type Password Instead', 'I-type na lang ang password'),
       confirmIcon: Icons.password_rounded,
     );
     if (!mounted) return;
@@ -726,7 +726,7 @@ class _FaceLoginScreenState extends State<FaceLoginScreen> {
                                           const PasswordLoginScreen())),
                               style: TextButton.styleFrom(
                                   foregroundColor: FaceIdColors.accent),
-                              child: Text(t('Type password instead',
+                              child: Text(t('Type Password Instead',
                                   'I-type na lang ang password')),
                             ),
                           ],

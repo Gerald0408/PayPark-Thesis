@@ -90,7 +90,7 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const BackButton(),
-        title: Text(t('Vehicle details', 'Detalye ng Sasakyan'),
+        title: Text(t('Vehicle Details', 'Detalye ng Sasakyan'),
             style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: TouchGlowOverlay(
@@ -123,7 +123,7 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                                     letterSpacing: 1.2)),
                             Text(
                                 t(
-                                    'registered ${DateFormat('MMM d, y').format(vehicle.registeredAt)}',
+                                    'Registered ${DateFormat('MMM d, y').format(vehicle.registeredAt)}',
                                     'narehistro noong ${DateFormat('MMM d, y').format(vehicle.registeredAt)}'),
                                 style: TextStyle(
                                     color: YosColors.sub,
@@ -144,15 +144,15 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _DetailRow(
-                          label: t('Full name', 'Buong Pangalan'),
+                          label: t('Full Name', 'Buong Pangalan'),
                           value: vehicle.driverName),
                       const Divider(height: 20),
                       _DetailRow(
-                          label: t('Vehicle type', 'Uri ng Sasakyan'),
+                          label: t('Vehicle Type', 'Uri ng Sasakyan'),
                           value: vt.label),
                       const Divider(height: 20),
                       _DetailRow(
-                          label: t('Default zone', 'Default na Zone'),
+                          label: t('Default Zone', 'Default na Zone'),
                           value: zone.name),
                     ],
                   ),
@@ -187,7 +187,7 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
               ),
               const SizedBox(height: 22),
               BreathingGlowButton(
-                label: t('Edit vehicle', 'I-edit ang Sasakyan'),
+                label: t('Edit Vehicle', 'I-edit ang Sasakyan'),
                 icon: Icons.edit_outlined,
                 onPressed: () => _edit(context),
               ),

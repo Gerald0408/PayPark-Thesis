@@ -1,5 +1,11 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart';
+import 'package:media_store_plus/media_store_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -46,7 +52,7 @@ class PdfExportService {
     }
   }
 
-  static Future<void> exportTable({
+  static Future<String?> exportTable({
     required String title,
     required List<String> headers,
     required List<List<String>> rows,
@@ -55,8 +61,16 @@ class PdfExportService {
     /// the table — omitted entirely when there's nothing to total, e.g.
     /// the activity/access logs.
     List<MapEntry<String, String>> summary = const [],
+    /// The date range the rows cover, already labelled by the caller (e.g.
+    /// "Period: Sep 1, 2026 - Sep 24, 2026"), printed under the title so a printed report says which days it's
+    /// for — omitted when the export isn't limited to a date range.
+    String? period,
+    /// Share sheet (default) or save straight to the phone's Downloads —
+    /// see [PdfExportAction].
+    PdfExportAction action = PdfExportAction.share,
   }) async {
     final safeTitleText = _pdfSafe(title);
+    final safePeriod = period == null ? null : _pdfSafe(period);
     final safeHeaders = headers.map(_pdfSafe).toList();
     final safeRows = rows.map((r) => r.map(_pdfSafe).toList()).toList();
     final safeSummary = summary
@@ -70,7 +84,11 @@ class PdfExportService {
 
     doc.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        // Wide tables (e.g. Transaction Logs with collector + payment
+        // columns) get landscape so cells stay readable.
+        pageFormat: headers.length > 8
+            ? PdfPageFormat.a4.landscape
+            : PdfPageFormat.a4,
         // Letterhead: seal + org name/address, repeated on every page —
         // the report title/generated-at/record-count sits below its own
         // divider so the letterhead reads as the issuing authority and the
@@ -108,6 +126,14 @@ class PdfExportService {
             pw.Text(safeTitleText,
                 style:
                     pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+            if (safePeriod != null) ...[
+              pw.SizedBox(height: 2),
+              pw.Text(safePeriod,
+                  style: pw.TextStyle(
+                      fontSize: 11,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.teal700)),
+            ],
             pw.SizedBox(height: 2),
             pw.Text(
                 'Generated $generatedAt · ${rows.length} record${rows.length == 1 ? '' : 's'}',
@@ -170,9 +196,45 @@ class PdfExportService {
     final stamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
     final safeTitle =
         title.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
-    await Printing.sharePdf(
-      bytes: await doc.save(),
-      filename: '${safeTitle}_$stamp.pdf',
-    );
+    final filename = '${safeTitle}_$stamp.pdf';
+    final bytes = await doc.save();
+    if (action == PdfExportAction.download) {
+      return _download(bytes, filename);
+    }
+    await Printing.sharePdf(bytes: bytes, filename: filename);
+    return null;
   }
+
+  /// Saves [bytes] where the person can find it again later and returns a
+  /// human-readable location for the success message. On Android that's
+  /// Download/PayPark via MediaStore (this app's target SDK has no direct
+  /// public-folder file access — same route VehicleDocumentCache's backup
+  /// uses). Elsewhere (web/desktop) the browser/OS share flow already
+  /// lands as a regular download, so it's reused as-is.
+  static Future<String?> _download(Uint8List bytes, String filename) async {
+    if (kIsWeb || !Platform.isAndroid) {
+      await Printing.sharePdf(bytes: bytes, filename: filename);
+      return filename;
+    }
+    final tempDir = await getTemporaryDirectory();
+    final tempFile = File('${tempDir.path}/$filename');
+    await tempFile.writeAsBytes(bytes);
+    // saveFile copies from the temp path and deletes it itself.
+    final info = await MediaStore().saveFile(
+      tempFilePath: tempFile.path,
+      dirType: DirType.download,
+      dirName: DirName.download,
+    );
+    if (info == null) throw Exception('Could not save to Downloads');
+    return 'Download/${MediaStore.appFolder}/${info.name}';
+  }
+}
+
+/// What "Export PDF" does with the finished file.
+enum PdfExportAction {
+  /// Opens the phone's share sheet (Messenger, Gmail, Drive, print…).
+  share,
+
+  /// Saves straight into the phone's Downloads folder.
+  download,
 }

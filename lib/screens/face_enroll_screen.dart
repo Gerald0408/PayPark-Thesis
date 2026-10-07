@@ -279,7 +279,7 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
       // an already-successful enrollment into a reported failure.
       try {
         await YosRepository.instance
-            .logAudit(AuditAction.faceEnroll, 'Face ID enrolled on device');
+            .logAudit(AuditAction.faceEnroll, 'Face ID Enrolled on Device');
       } catch (_) {}
       if (!mounted) return;
       Toast.success(context, t('Face ID saved', 'Na-save ang Face ID'));
@@ -424,7 +424,7 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
                               const SizedBox(height: 2),
                               Text(
                                   hasCapture
-                                      ? t('Face captured', 'Nakuha ang mukha')
+                                      ? t('Face Captured', 'Nakuha ang mukha')
                                       : t('Follow the prompt below',
                                           'Sundin ang tagubilin sa ibaba'),
                                   style: const TextStyle(

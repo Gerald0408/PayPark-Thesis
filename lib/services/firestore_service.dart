@@ -13,6 +13,8 @@ import '../core/username.dart';
 import '../models/access_request.dart';
 import '../models/collector.dart';
 import '../models/trashed_collector.dart';
+import '../core/names.dart';
+import '../core/parking_fee.dart';
 import '../models/transaction.dart';
 import 'face_auth_service.dart';
 import 'fee_settings_service.dart';
@@ -41,7 +43,9 @@ class YosRepository extends ChangeNotifier {
   /// name set for this account.
   String get currentUserName {
     final name = _auth.currentUser?.displayName;
-    return name != null && name.isNotEmpty ? name : 'Collector';
+    return name != null && name.trim().isNotEmpty
+        ? formatPersonName(name)
+        : 'Collector';
   }
 
   /// Signed-in collector's own phone number, for the receipt footer (see
@@ -93,8 +97,8 @@ class YosRepository extends ChangeNotifier {
         logAudit(
           nowOnline ? AuditAction.syncOnline : AuditAction.syncOffline,
           nowOnline
-              ? 'Connection restored background sync resumed'
-              : 'Connection lost entering offline logging mode',
+              ? 'Connection Restored Background Sync Resumed'
+              : 'Connection Lost Entering Offline Logging Mode',
         );
       }
     });
@@ -120,7 +124,7 @@ class YosRepository extends ChangeNotifier {
       // recognition. The audit entry is best-effort — never let it turn a
       // real, successful sign-in into a reported failure.
       try {
-        await logAudit(AuditAction.login, 'Collector signed in');
+        await logAudit(AuditAction.login, 'Collector Signed In');
       } catch (_) {}
       return cred;
     } on FirebaseAuthException {
@@ -147,7 +151,7 @@ class YosRepository extends ChangeNotifier {
   }
 
   Future<void> logout() async {
-    await logAudit(AuditAction.logout, 'Collector signed out');
+    await logAudit(AuditAction.logout, 'Collector Signed Out');
     await _auth.signOut();
   }
 
@@ -763,6 +767,7 @@ class YosRepository extends ChangeNotifier {
     required String plateNumber,
     required VehicleType type,
     required String zoneId,
+    String source = EntrySource.manual,
   }) {
     final ts = DateTime.now();
     return ParkingTransaction(
@@ -773,6 +778,9 @@ class YosRepository extends ChangeNotifier {
       fee: FeeSettingsService.instance.feeFor(type),
       zoneId: zoneId,
       timestamp: ts,
+      collectorId: _auth.currentUser?.uid,
+      collectorName: currentUserName,
+      source: source,
     );
   }
 
@@ -784,11 +792,111 @@ class YosRepository extends ChangeNotifier {
   void saveTransaction(ParkingTransaction tx) {
     // Deliberately NOT awaited: Firestore caches locally and syncs later.
     _tx.add(tx.toMap());
-    logAudit(AuditAction.newEntry,
-        'Logged ${tx.vehicleType} ${tx.plateNumber}” ‚ ${tx.fee.toStringAsFixed(2)} (${tx.trackingId})');
-    if (tx.printed) {
-      logAudit(AuditAction.printReceipt, 'Printed receipt ${tx.trackingId}');
+    if (tx.totalPaid == 0) {
+      logAudit(AuditAction.newEntry,
+          'Time In ${tx.vehicleType} ${tx.plateNumber} at '
+          '${DateFormat('MMM d hh:mm a').format(tx.timestamp)} (${tx.trackingId})');
+    } else {
+      logAudit(AuditAction.newEntry,
+          'Logged ${tx.vehicleType} ${tx.plateNumber} PHP '
+          '${tx.totalPaid.toStringAsFixed(2)} via ${PaymentMethod.label(tx.paymentMethod)}'
+          '${tx.paymentRef != null ? ' (ref ${tx.paymentRef})' : ''} '
+          '(${tx.trackingId})');
     }
+    if (tx.printed) {
+      logAudit(AuditAction.printReceipt,
+          '${tx.totalPaid == 0 ? 'Printed time-in ticket' : 'Printed receipt'} ${tx.trackingId}');
+    }
+  }
+
+  /// The vehicle's current visit if it's still parked — its most recent
+  /// transaction with no time out, from the last 24 hours (an older open
+  /// one is a forgotten check-out, not a car still in the lot). Null when
+  /// it isn't checked in. Two equality filters, so Firestore serves this
+  /// without a composite index; works offline from the local cache.
+  Future<ParkingTransaction?> openVisitFor(String plateNumber) async {
+    final snap = await _tx
+        .where('plate_number', isEqualTo: plateNumber.trim().toUpperCase())
+        .where('time_out', isNull: true)
+        .get();
+    final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+    final open = snap.docs
+        .map(ParkingTransaction.fromDoc)
+        .where((tx) => tx.awaitingCheckout && tx.timestamp.isAfter(cutoff))
+        .toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return open.firstOrNull;
+  }
+
+  /// Time out: records when the vehicle left and everything paid now —
+  /// offline-safe, returns the updated transaction for the receipt.
+  ///
+  /// [price] is the whole visit (FeeSettingsService.quote). A time-in
+  /// ticket (nothing paid yet) gets the base fee, extra hours, any
+  /// lost-ticket fee and points discount written in full. A visit from
+  /// before time-in tickets existed already paid its base fee at check-in,
+  /// so only the remainder is collected, as extra.
+  ParkingTransaction checkOut(
+    ParkingTransaction tx, {
+    required ParkingFee price,
+    required String paymentMethod,
+    String? paymentRef,
+    DateTime? timeOut,
+  }) {
+    final out = timeOut ?? DateTime.now();
+    final name = currentUserName;
+    final ref = paymentRef == null || paymentRef.isEmpty ? null : paymentRef;
+    final prepaid = tx.fee > 0;
+    final baseCharged =
+        (price.baseFee - price.discount).clamp(0, price.baseFee).toDouble();
+    final extra = prepaid
+        ? (price.total - tx.fee - price.lostTicketFee).clamp(0, double.infinity)
+            .toDouble()
+        : price.extraFee;
+
+    _tx.doc(tx.docId).update({
+      'time_out': Timestamp.fromDate(out),
+      'checked_out_by': _uid,
+      'checked_out_by_name': name,
+      if (!prepaid) ...{
+        'fee': baseCharged,
+        'payment_method': paymentMethod,
+        if (ref != null) 'payment_ref': ref,
+        if (price.discount > 0) 'discount': price.discount,
+        'printed': true,
+      },
+      if (extra > 0) ...{
+        'extra_hours': price.extraHours,
+        'extra_fee': extra,
+        'extra_payment_method': paymentMethod,
+        if (ref != null) 'extra_payment_ref': ref,
+      },
+      if (price.lostTicketFee > 0) 'lost_ticket_fee': price.lostTicketFee,
+    });
+    logAudit(
+        AuditAction.checkOut,
+        'Time Out ${tx.plateNumber} (${tx.trackingId}) at '
+        '${DateFormat('MMM d hh:mm a').format(out)}'
+        '${timeOut != null ? ' (time chosen by collector)' : ''}, '
+        'stayed ${formatStay(out.difference(tx.timestamp))}, '
+        'paid PHP ${(prepaid ? extra + price.lostTicketFee : price.total).toStringAsFixed(2)} '
+        'via ${PaymentMethod.label(paymentMethod)}'
+        '${ref != null ? ' (ref $ref)' : ''}'
+        '${price.lostTicketFee > 0 ? ', incl. lost ticket fee' : ''}');
+    return tx.copyWith(
+      timeOut: out,
+      checkedOutByName: name,
+      fee: prepaid ? tx.fee : baseCharged,
+      discount: prepaid ? tx.discount : price.discount,
+      paymentMethod: prepaid ? tx.paymentMethod : paymentMethod,
+      paymentRef: prepaid ? tx.paymentRef : ref,
+      extraHours: extra > 0 ? price.extraHours : 0,
+      extraFee: extra,
+      extraPaymentMethod: extra > 0 ? paymentMethod : null,
+      extraPaymentRef: extra > 0 ? ref : null,
+      lostTicketFee: price.lostTicketFee,
+      printed: true,
+    );
   }
 
   /// Live stream of today's transactions (dashboard counters + logs).

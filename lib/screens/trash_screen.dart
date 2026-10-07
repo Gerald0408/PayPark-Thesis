@@ -69,7 +69,7 @@ class _TrashScreenState extends State<TrashScreen> {
               'trash bin. Hindi na ito maibabalik pa — pero mananatili '
               'pa rin ang kanilang mga nakaraang transaksyon at audit '
               'history.'),
-      confirmLabel: t('Delete forever', 'Burahin nang Tuluyan'),
+      confirmLabel: t('Delete Forever', 'Burahin nang Tuluyan'),
       confirmIcon: Icons.delete_forever_rounded,
       confirmColor: YosColors.bad,
     );
@@ -243,7 +243,7 @@ class _TrashScreenState extends State<TrashScreen> {
                                     leading: Icon(Icons.delete_forever_rounded,
                                         color: YosColors.bad),
                                     title: Text(
-                                        t('Delete forever', 'Burahin nang Tuluyan')),
+                                        t('Delete Forever', 'Burahin nang Tuluyan')),
                                     contentPadding: EdgeInsets.zero,
                                   ),
                                 ),

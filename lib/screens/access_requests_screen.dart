@@ -58,7 +58,7 @@ class _AccessRequestsScreenState extends State<AccessRequestsScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: const BackButton(),
-        title: Text(t('Access requests', 'Mga Kahilingan sa Access'),
+        title: Text(t('Access Requests', 'Mga Kahilingan sa Access'),
             style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: TouchGlowOverlay(

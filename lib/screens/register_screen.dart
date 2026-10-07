@@ -283,7 +283,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                         TextCapitalization.words,
                                     autofillHints: const [AutofillHints.name],
                                     decoration: InputDecoration(
-                                      labelText: t('Full name', 'Buong Pangalan'),
+                                      labelText: t('Full Name', 'Buong Pangalan'),
                                       prefixIcon: const Icon(
                                           Icons.person_outline_rounded),
                                     ),

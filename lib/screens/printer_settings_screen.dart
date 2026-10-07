@@ -120,7 +120,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       appBar: AppBar(
         automaticallyImplyLeading: !widget.embedded,
         leading: widget.embedded ? null : const BackButton(),
-        title: Text(t('Printer settings', 'Setting ng Printer'),
+        title: Text(t('Printer Settings', 'Setting ng Printer'),
             style: const TextStyle(fontWeight: FontWeight.w800)),
       ),
       body: TouchGlowOverlay(
@@ -168,7 +168,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                                     ? t('Ready to print receipts',
                                         'Handa nang mag-print ng resibo')
                                     : t(
-                                        'Pair a Bluetooth thermal printer below',
+                                        'Pair a Bluetooth Thermal Printer Below',
                                         'I-pair ang isang Bluetooth thermal printer sa ibaba'),
                                 style: TextStyle(
                                     color: YosColors.ink,
@@ -219,7 +219,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(t('Nearby printers', 'Mga Malapit na Printer'),
+                  Text(t('Nearby Printers', 'Mga Malapit na Printer'),
                       style: TextStyle(
                           color: YosColors.ink,
                           fontWeight: FontWeight.w800,

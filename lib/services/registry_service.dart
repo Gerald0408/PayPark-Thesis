@@ -7,6 +7,7 @@ import '../models/registered_vehicle.dart';
 import '../models/transaction.dart';
 import 'document_pdf.dart';
 import 'firestore_service.dart';
+import 'location_service.dart';
 import 'points_settings_service.dart';
 import 'vehicle_document_cache.dart';
 import 'vehicle_document_storage.dart';
@@ -105,6 +106,63 @@ class VehicleRegistry {
     // plate twice updates rather than duplicates.
     await _col.doc(id).set(v.toMap(), SetOptions(merge: true));
     return v;
+  }
+
+  /// Edits an already-registered vehicle's plate number and/or OR/CR from
+  /// the scan-time vehicle-type picker (see pickVehicleForRfidTag). Unlike
+  /// [register], this carries every other field over untouched — entry
+  /// count, points, RFID tag, license photo, registration date — since
+  /// it's the same vehicle, just corrected. Plate is the document key, so
+  /// a changed plate moves the document: written under the new key and
+  /// the old one deleted in a single batch (photos are kept, not deleted
+  /// like [delete] would). [orCrPhotoPath] is only applied when it differs
+  /// from what [v] already has, i.e. a fresh capture. Callers must check
+  /// the new plate doesn't already belong to another vehicle first.
+  Future<RegisteredVehicle> editVehicle(
+    RegisteredVehicle v, {
+    required String plateNumber,
+    String? orCrPhotoPath,
+  }) async {
+    final oldKey = RegisteredVehicle.normalize(v.plateNumber);
+    final newKey = RegisteredVehicle.normalize(plateNumber);
+    final oldDoc = await _col.doc(oldKey).get();
+    final data = Map<String, dynamic>.from(oldDoc.data() ?? v.toMap());
+    data['plate_number'] = plateNumber.trim().toUpperCase();
+    data['plate_key'] = newKey;
+
+    if (orCrPhotoPath != null && orCrPhotoPath != v.orCrPhotoPath) {
+      final orCrUrl = await VehicleDocumentStorage.instance.upload(
+          plateKey: newKey, docType: 'or_cr', localKey: orCrPhotoPath);
+      data['or_cr_photo_path'] = orCrPhotoPath;
+      if (orCrUrl != null) {
+        data['or_cr_photo_url'] = orCrUrl;
+      } else {
+        data.remove('or_cr_photo_url');
+      }
+      final combined = await _buildCombinedDocument(
+        plateKey: newKey,
+        driverLicensePhotoPath: v.driverLicensePhotoPath,
+        driverLicensePhotoUrl: v.driverLicensePhotoUrl,
+        orCrPhotoPath: orCrPhotoPath,
+        orCrPhotoUrl: orCrUrl,
+      );
+      if (combined != null) {
+        data['documents_path'] = combined.path;
+        if (combined.url != null) {
+          data['documents_url'] = combined.url;
+        } else {
+          data.remove('documents_url');
+        }
+      }
+    }
+
+    final batch = FirebaseFirestore.instance.batch();
+    batch.set(_col.doc(newKey), data);
+    if (newKey != oldKey) batch.delete(_col.doc(oldKey));
+    // Not awaited to completion offline — Firestore applies the batch to
+    // the local cache immediately, same offline-first pattern as [touch].
+    batch.commit().catchError((e) => debugPrint('editVehicle: $e'));
+    return RegisteredVehicle.fromDoc(await _col.doc(newKey).get());
   }
 
   /// Rebuilds the single combined PDF (driver's license then OR/CR — see
@@ -308,6 +366,7 @@ class VehicleRegistry {
     String plate, {
     required double fee,
     double redeemedPoints = 0,
+    GeoTag? geo,
   }) async {
     final key = RegisteredVehicle.normalize(plate);
     if (key.isEmpty) return;
@@ -317,6 +376,9 @@ class VehicleRegistry {
     };
     final doc = await _col.doc(key).get();
     final enrolled = (doc.data()?['rfid_tag'] as String?) != null;
+    // Geotag on the reward's audit entry — where points were earned or
+    // spent, for checking a suspicious redemption later.
+    final at = geo == null ? '' : ' at GPS ${geo.short}';
     if (enrolled) {
       final earned = redeemedPoints > 0
           ? 0.0
@@ -329,7 +391,7 @@ class VehicleRegistry {
         final afterEarn = running + earned;
         YosRepository.instance.logAudit(
           AuditAction.pointsEarned,
-          '$plate earned ${formatPoints(earned)} pts (fee ₱${fee.toStringAsFixed(0)})',
+          '$plate Earned ${formatPoints(earned)} Pts (Fee ₱${fee.toStringAsFixed(0)})$at',
           previousValue: running,
           newValue: afterEarn,
         );
@@ -339,13 +401,58 @@ class VehicleRegistry {
         final afterRedeem = running - redeemedPoints;
         YosRepository.instance.logAudit(
           AuditAction.pointsRedeemed,
-          '$plate redeemed ${formatPoints(redeemedPoints)} pts',
+          '$plate redeemed ${formatPoints(redeemedPoints)} pts$at',
           previousValue: running,
           newValue: afterRedeem,
         );
       }
     }
     _col.doc(key).set(update, SetOptions(merge: true));
+  }
+
+  /// Settles a visit's points at time out, when it's paid: spends
+  /// [redeemedPoints] if a discount was used, otherwise earns points on
+  /// [paid] (same rate as always — PointsSettingsService.pointsForFee).
+  /// The visit itself was already counted at time in (see [touch]). Only
+  /// RFID-enrolled vehicles have points; returns null for others.
+  Future<({double earned, double redeemed, double balance})?>
+      settleVisitPoints(
+    String plate, {
+    required double paid,
+    double redeemedPoints = 0,
+    GeoTag? geo,
+  }) async {
+    final key = RegisteredVehicle.normalize(plate);
+    if (key.isEmpty) return null;
+    final doc = await _col.doc(key).get();
+    if ((doc.data()?['rfid_tag'] as String?) == null) return null;
+    final before = (doc.data()?['points'] as num?)?.toDouble() ?? 0;
+    final earned = redeemedPoints > 0
+        ? 0.0
+        : PointsSettingsService.instance.pointsForFee(paid);
+    final after = before + earned - redeemedPoints;
+    if (earned > 0 || redeemedPoints > 0) {
+      _col.doc(key).set({'points': FieldValue.increment(earned - redeemedPoints)},
+          SetOptions(merge: true));
+    }
+    final at = geo == null ? '' : ' at GPS ${geo.short}';
+    if (earned > 0) {
+      YosRepository.instance.logAudit(
+        AuditAction.pointsEarned,
+        '$plate Earned ${formatPoints(earned)} Pts (Paid ₱${paid.toStringAsFixed(0)})$at',
+        previousValue: before,
+        newValue: after,
+      );
+    }
+    if (redeemedPoints > 0) {
+      YosRepository.instance.logAudit(
+        AuditAction.pointsRedeemed,
+        '$plate redeemed ${formatPoints(redeemedPoints)} pts$at',
+        previousValue: before,
+        newValue: after,
+      );
+    }
+    return (earned: earned, redeemed: redeemedPoints, balance: after);
   }
 
   /// Live stream of all registered vehicles, newest first.

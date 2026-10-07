@@ -403,7 +403,7 @@ class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _name,
-                  decoration: InputDecoration(labelText: t('Full name', 'Buong Pangalan')),
+                  decoration: InputDecoration(labelText: t('Full Name', 'Buong Pangalan')),
                   validator: (v) => (v == null || v.trim().length < 2)
                       ? t('Enter their full name', 'Ilagay ang buo nilang pangalan')
                       : null,

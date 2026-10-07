@@ -277,7 +277,7 @@ class _AccessRequestScreenState extends State<AccessRequestScreen> {
                                             AutofillHints.name
                                           ],
                                           decoration: InputDecoration(
-                                            labelText: t('Your full name',
+                                            labelText: t('Your Full Name',
                                                 'Buong pangalan mo'),
                                             prefixIcon: const Icon(
                                                 Icons.person_outline_rounded),
@@ -437,7 +437,7 @@ class _PasscodeReady extends StatelessWidget {
                 ),
               )
             : BreathingGlowButton(
-                label: t('Sign in', 'Mag-sign-in'),
+                label: t('Sign In', 'Mag-sign-in'),
                 icon: Icons.login_rounded,
                 onPressed: onSubmit,
               ),

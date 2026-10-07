@@ -48,16 +48,43 @@ Future<RegisteredVehicle?> pickVehicleForRfidTag(
   // rather than trusted to already be there.
   byType[VehicleType.fromLabel(current.vehicleType)] = current;
 
-  final choice = await showModalBottomSheet<_PickChoice>(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (_) => _VehicleTypePickerSheet(
-      currentType: VehicleType.fromLabel(current.vehicleType),
-      byType: byType,
-    ),
-  );
-  if (choice == null || !context.mounted) return null;
+  // Loops so that after editing a saved type's details (the pencil on its
+  // row) the collector lands back on this picker, with the edited plate
+  // showing, to pick which vehicle this entry is actually for.
+  _PickChoice? choice;
+  while (true) {
+    choice = await showModalBottomSheet<_PickChoice>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _VehicleTypePickerSheet(
+        currentType: VehicleType.fromLabel(current.vehicleType),
+        byType: byType,
+      ),
+    );
+    if (choice == null || !context.mounted) return null;
+    final toEdit = choice.edit;
+    if (toEdit == null) break;
+
+    final edited = await showModalBottomSheet<RegisteredVehicle>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AddVehicleTypeSheet(
+        tag: tag,
+        type: VehicleType.fromLabel(toEdit.vehicleType),
+        driverName: toEdit.driverName,
+        defaultZoneId: toEdit.defaultZoneId,
+        existing: toEdit,
+      ),
+    );
+    if (!context.mounted) return null;
+    if (edited != null) {
+      byType[VehicleType.fromLabel(edited.vehicleType)] = edited;
+      Toast.success(context,
+          t('Vehicle Details updated', 'Na-update ang detalye ng sasakyan'));
+    }
+  }
 
   final existing = choice.vehicle;
   if (existing != null) {
@@ -76,13 +103,14 @@ Future<RegisteredVehicle?> pickVehicleForRfidTag(
   }
 
   if (!context.mounted) return null;
+  final addType = choice.addType!;
   return showModalBottomSheet<RegisteredVehicle>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (_) => _AddVehicleTypeSheet(
       tag: tag,
-      type: choice.addType!,
+      type: addType,
       driverName: current.driverName,
       defaultZoneId: current.defaultZoneId,
     ),
@@ -92,12 +120,21 @@ Future<RegisteredVehicle?> pickVehicleForRfidTag(
 class _PickChoice {
   const _PickChoice.existing(RegisteredVehicle v)
       : vehicle = v,
-        addType = null;
+        addType = null,
+        edit = null;
   const _PickChoice.addNew(VehicleType t)
       : vehicle = null,
-        addType = t;
+        addType = t,
+        edit = null;
+  const _PickChoice.edit(RegisteredVehicle v)
+      : vehicle = null,
+        addType = null,
+        edit = v;
   final RegisteredVehicle? vehicle;
   final VehicleType? addType;
+
+  /// A saved type whose plate/OR-CR the collector wants to correct.
+  final RegisteredVehicle? edit;
 }
 
 /// Half-screen, drag-to-resize sheet (not a fixed dialog) — same
@@ -133,7 +170,7 @@ class _VehicleTypePickerSheet extends StatelessWidget {
                   borderRadius: BorderRadius.circular(3)),
             ),
             const SizedBox(height: 14),
-            Text(t('Select vehicle type', 'Piliin ang uri ng sasakyan'),
+            Text(t('Select Vehicle Type', 'Piliin ang uri ng sasakyan'),
                 style: TextStyle(
                     color: YosColors.ink,
                     fontWeight: FontWeight.w800,
@@ -229,14 +266,22 @@ class _VehicleTypePickerSheet extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            color: hasData
-                                ? YosColors.sub
-                                : YosColors.accentDeep,
+                            color:
+                                hasData ? YosColors.sub : YosColors.accentDeep,
                             fontWeight: FontWeight.w600,
                             fontSize: 12)),
                   ],
                 ),
               ),
+              if (hasData)
+                IconButton(
+                  tooltip: t('Edit details', 'I-edit ang detalye'),
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.edit_outlined,
+                      color: YosColors.accentDeep, size: 20),
+                  onPressed: () =>
+                      Navigator.pop(context, _PickChoice.edit(existing)),
+                ),
               Icon(
                 hasData
                     ? Icons.chevron_right_rounded
@@ -265,6 +310,7 @@ class _AddVehicleTypeSheet extends StatefulWidget {
     required this.type,
     required this.driverName,
     required this.defaultZoneId,
+    this.existing,
   });
 
   final String tag;
@@ -272,15 +318,32 @@ class _AddVehicleTypeSheet extends StatefulWidget {
   final String driverName;
   final String defaultZoneId;
 
+  /// Set when editing an already-saved type instead of adding a new one —
+  /// prefills its plate/OR-CR and saves via VehicleRegistry.editVehicle.
+  final RegisteredVehicle? existing;
+
   @override
   State<_AddVehicleTypeSheet> createState() => _AddVehicleTypeSheetState();
 }
 
 class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
   final _formKey = GlobalKey<FormState>();
-  final _plate = TextEditingController();
+  late final TextEditingController _plate;
   String? _orCrPhotoPath;
+  String? _orCrPhotoUrl;
+  bool _showOrCr = false;
   bool _saving = false;
+
+  bool get _hasOrCr => _orCrPhotoPath != null || _orCrPhotoUrl != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    _plate = TextEditingController(text: e?.plateNumber ?? '');
+    _orCrPhotoPath = e?.orCrPhotoPath;
+    _orCrPhotoUrl = e?.orCrPhotoUrl;
+  }
 
   @override
   void dispose() {
@@ -300,7 +363,10 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
       ),
     );
     if (result == null || !mounted) return;
-    setState(() => _orCrPhotoPath = result.filePath);
+    setState(() {
+      _orCrPhotoPath = result.filePath;
+      _orCrPhotoUrl = null;
+    });
   }
 
   Future<void> _save() async {
@@ -308,12 +374,18 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
     setState(() => _saving = true);
     try {
       final plate = _plate.text.trim();
+      final existing = widget.existing;
       // This plate must not already belong to a different, unrelated
       // vehicle — VehicleRegistry.register keys on plate and merges into
       // whatever document already has that key, so saving over one here
       // would silently corrupt someone else's registered vehicle instead
-      // of creating this driver's new one.
-      final clash = await VehicleRegistry.instance.lookup(plate);
+      // of creating this driver's new one. When editing, keeping this
+      // vehicle's own plate is of course not a clash.
+      final samePlate = existing != null &&
+          RegisteredVehicle.normalize(existing.plateNumber) ==
+              RegisteredVehicle.normalize(plate);
+      final clash =
+          samePlate ? null : await VehicleRegistry.instance.lookup(plate);
       if (clash != null) {
         if (!mounted) return;
         Toast.error(
@@ -322,20 +394,28 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
                 'Naka-rehistro na ang plaka $plate sa ibang sasakyan.'));
         return;
       }
-      final saved = await VehicleRegistry.instance.register(
-        plateNumber: plate,
-        driverName: widget.driverName,
-        vehicleType: widget.type.label,
-        defaultZoneId: widget.defaultZoneId,
-        orCrPhotoPath: _orCrPhotoPath,
-        rfidTag: widget.tag,
-      );
+      final saved = existing != null
+          ? await VehicleRegistry.instance.editVehicle(
+              existing,
+              plateNumber: plate,
+              orCrPhotoPath: _orCrPhotoPath,
+            )
+          : await VehicleRegistry.instance.register(
+              plateNumber: plate,
+              driverName: widget.driverName,
+              vehicleType: widget.type.label,
+              defaultZoneId: widget.defaultZoneId,
+              orCrPhotoPath: _orCrPhotoPath,
+              rfidTag: widget.tag,
+            );
       if (!mounted) return;
       Navigator.of(context).pop(saved);
     } catch (e) {
       if (!mounted) return;
-      Toast.error(context,
-          t("Couldn't save this vehicle: $e", 'Hindi na-save ang sasakyan: $e'));
+      Toast.error(
+          context,
+          t("Couldn't save this vehicle: $e",
+              'Hindi na-save ang sasakyan: $e'));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -344,8 +424,8 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: DraggableScrollableSheet(
         initialChildSize: 0.6,
         minChildSize: 0.4,
@@ -354,8 +434,7 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
         builder: (context, scrollController) => Container(
           decoration: BoxDecoration(
             color: YosColors.bg,
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           ),
           child: Form(
             key: _formKey,
@@ -388,8 +467,11 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                          t('Add ${widget.type.label} details',
-                              'Magdagdag ng detalye ng ${widget.type.label}'),
+                          widget.existing != null
+                              ? t('Edit ${widget.type.label} Details',
+                                  'I-edit ang detalye ng ${widget.type.label}')
+                              : t('Add ${widget.type.label} Details',
+                                  'Magdagdag ng detalye ng ${widget.type.label}'),
                           style: TextStyle(
                               color: YosColors.ink,
                               fontWeight: FontWeight.w800,
@@ -399,13 +481,19 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                    t(
-                        'This card isn\'t registered for this vehicle type '
-                            'yet — save it once here and it\'s remembered '
-                            'from now on, just like the rest of ${widget.driverName}\'s vehicles.',
-                        'Hindi pa naka-rehistro ang card na ito para sa uri ng '
-                            'sasakyang ito — i-save ito ngayon at maaalala na '
-                            'mula ngayon, tulad ng ibang sasakyan ni ${widget.driverName}.'),
+                    widget.existing != null
+                        ? t(
+                            'Correct this vehicle\'s plate number or OR/CR. '
+                                'Its points and entry history stay with it.',
+                            'Itama ang plaka numero o OR/CR ng sasakyang ito. '
+                                'Mananatili ang points at history nito.')
+                        : t(
+                            'This card isn\'t registered for this vehicle type '
+                                'yet — save it once here and it\'s remembered '
+                                'from now on, just like the rest of ${widget.driverName}\'s vehicles.',
+                            'Hindi pa naka-rehistro ang card na ito para sa uri ng '
+                                'sasakyang ito — i-save ito ngayon at maaalala na '
+                                'mula ngayon, tulad ng ibang sasakyan ni ${widget.driverName}.'),
                     style: TextStyle(
                         color: YosColors.sub,
                         fontSize: 12,
@@ -416,7 +504,7 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
                   autofocus: true,
                   textCapitalization: TextCapitalization.characters,
                   decoration: InputDecoration(
-                    labelText: t('Plate number', 'Plaka Numero'),
+                    labelText: t('Plate Number', 'Plaka Numero'),
                     prefixIcon: const Icon(Icons.pin_outlined),
                   ),
                   validator: (v) => (v == null || v.trim().length < 5)
@@ -425,34 +513,54 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
                       : null,
                 ),
                 const SizedBox(height: 16),
-                Text('OR/CR',
-                    style: TextStyle(
-                        color: YosColors.ink,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13)),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: AspectRatio(
-                    aspectRatio: 1.7,
-                    child: _orCrPhotoPath == null
-                        ? Container(
-                            color: YosColors.surfaceHigh,
-                            alignment: Alignment.center,
-                            child: Icon(Icons.badge_outlined,
-                                color: YosColors.sub, size: 32),
-                          )
-                        : DocPhotoView(path: _orCrPhotoPath, url: null),
+                // OR/CR is optional — collapsed behind a button, same as
+                // VehicleAttachmentScreen. Hiding keeps a captured photo.
+                if (_showOrCr) ...[
+                  Text(t('OR/CR (optional)', 'OR/CR (opsyonal)'),
+                      style: TextStyle(
+                          color: YosColors.ink,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13)),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: AspectRatio(
+                      aspectRatio: 1.7,
+                      child: !_hasOrCr
+                          ? Container(
+                              color: YosColors.surfaceHigh,
+                              alignment: Alignment.center,
+                              child: Icon(Icons.badge_outlined,
+                                  color: YosColors.sub, size: 32),
+                            )
+                          : DocPhotoView(
+                              path: _orCrPhotoPath, url: _orCrPhotoUrl),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: _scanOrCr,
-                  icon: const Icon(Icons.camera_alt_outlined, size: 18),
-                  label: Text(_orCrPhotoPath == null
-                      ? t('Capture OR/CR', 'Kumuha ng OR/CR')
-                      : t('Retake', 'Kunin Ulit')),
-                ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _scanOrCr,
+                    icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                    label: Text(!_hasOrCr
+                        ? t('Capture OR/CR', 'Kumuha ng OR/CR')
+                        : t('Retake', 'Kunin Ulit')),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => setState(() => _showOrCr = false),
+                    icon: const Icon(Icons.expand_less_rounded),
+                    label: Text(t('Hide OR/CR', 'Itago ang OR/CR')),
+                  ),
+                ] else
+                  OutlinedButton.icon(
+                    onPressed: () => setState(() => _showOrCr = true),
+                    icon: Icon(!_hasOrCr
+                        ? Icons.add_rounded
+                        : Icons.expand_more_rounded),
+                    label: Text(!_hasOrCr
+                        ? t('Add OR/CR (optional)',
+                            'Magdagdag ng OR/CR (opsyonal)')
+                        : t('Show OR/CR', 'Ipakita ang OR/CR')),
+                  ),
                 const SizedBox(height: 22),
                 _saving
                     ? Center(
@@ -464,7 +572,9 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
                         ),
                       )
                     : BreathingGlowButton(
-                        label: t('Save vehicle', 'I-save ang Sasakyan'),
+                        label: widget.existing != null
+                            ? t('Save changes', 'I-save ang mga pagbabago')
+                            : t('Save Vehicle', 'I-save ang Sasakyan'),
                         icon: Icons.check_rounded,
                         onPressed: _save,
                       ),

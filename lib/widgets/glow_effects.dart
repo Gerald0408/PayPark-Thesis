@@ -252,7 +252,7 @@ class SyncBadge extends StatelessWidget {
     final Color bgc = online ? Colors.white : YosColors.bad;
     final Color fgc = online ? YosColors.onAccentSoft : Colors.white;
     final label = online
-        ? (pendingCount > 0 ? 'Syncing $pendingCount' : 'All synced')
+        ? (pendingCount > 0 ? 'Syncing $pendingCount' : 'All Synced')
         : 'Offline${pendingCount > 0 ? ' · $pendingCount saved' : ''}';
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),

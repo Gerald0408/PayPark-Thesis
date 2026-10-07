@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../core/date_range.dart';
 import '../core/theme.dart';
 import '../models/transaction.dart';
 import '../services/firestore_service.dart';
@@ -348,6 +349,7 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
           },
           itemLabel: (tx) => '${tx.trackingId} · ${tx.plateNumber} · '
               '${tx.driverName}',
+          dateOf: (tx) => tx.timestamp,
           onExport: _generateEntriesPdf,
         ),
       );
@@ -370,18 +372,24 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
               _actorDisplay(log).toUpperCase().contains(query);
         },
         itemLabel: (log) => '${log.description} — ${_actorDisplay(log)}',
-        onExport: (matched) => _generateActivityPdf(matched, tab),
+        dateOf: (log) => log.timestamp,
+        onExport: (matched, period, action) =>
+            _generateActivityPdf(matched, tab, period, action),
       ),
     );
   }
 
-  Future<void> _generateEntriesPdf(List<ParkingTransaction> txs) async {
+  Future<void> _generateEntriesPdf(
+      List<ParkingTransaction> txs, DateTimeRange? period,
+      PdfExportAction action) async {
     try {
       final dateFmt = DateFormat('MMM d, yyyy');
       final timeFmt = DateFormat('hh:mm:ss a');
-      final totalFee = txs.fold<double>(0, (s, tx) => s + tx.fee);
-      await PdfExportService.exportTable(
+      final totalFee = txs.fold<double>(0, (s, tx) => s + tx.totalPaid);
+      final savedTo = await PdfExportService.exportTable(
+        action: action,
         title: t('Transaction entries', 'Mga Transaksyon'),
+        period: periodLabel(period),
         headers: [
           '#',
           t('Date', 'Petsa'),
@@ -400,18 +408,18 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
               txs[i].trackingId,
               txs[i].plateNumber,
               txs[i].driverName,
-              'PHP ${txs[i].fee.toStringAsFixed(0)}',
+              'PHP ${txs[i].totalPaid.toStringAsFixed(0)}',
             ],
         ],
         summary: [
           MapEntry(t('Total transactions', 'Kabuuang Transaksyon'),
               '${txs.length}'),
-          MapEntry(t('Total collected', 'Kabuuang Nakolekta'),
+          MapEntry(t('Total Collected', 'Kabuuang Nakolekta'),
               'PHP ${totalFee.toStringAsFixed(0)}'),
         ],
       );
       if (mounted) {
-        _queuePdfPopup(t('PDF sent to share sheet', 'Naipadala ang PDF'));
+        _queuePdfPopup(pdfExportDoneMessage(action, savedTo));
       }
     } catch (e) {
       if (mounted) {
@@ -422,7 +430,8 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _generateActivityPdf(
-      List<AuditLog> logs, _AuditTab tab) async {
+      List<AuditLog> logs, _AuditTab tab, DateTimeRange? period,
+      PdfExportAction action) async {
     try {
       final dateFmt = DateFormat('MMM d, yyyy');
       final timeFmt = DateFormat('hh:mm:ss a');
@@ -437,10 +446,12 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
           ? dateFmt.format(earliest)
           : '${dateFmt.format(earliest)} - ${dateFmt.format(latest)}';
       final actorCount = logs.map(_actorDisplay).toSet().length;
-      await PdfExportService.exportTable(
+      final savedTo = await PdfExportService.exportTable(
+        action: action,
         title: tab == _AuditTab.access
             ? t('Access log', 'Access Log')
             : t('Activity log', 'Activity Log'),
+        period: periodLabel(period),
         headers: [
           '#',
           t('Date', 'Petsa'),
@@ -460,12 +471,12 @@ class _AuditScreenState extends State<AuditScreen> with WidgetsBindingObserver {
         ],
         summary: [
           MapEntry(t('Total events', 'Kabuuang Pangyayari'), '${logs.length}'),
-          MapEntry(t('Date range', 'Saklaw ng Petsa'), dateRange),
+          MapEntry(t('Date Range', 'Saklaw ng Petsa'), dateRange),
           MapEntry(t('Actors involved', 'Mga Kasangkot'), '$actorCount'),
         ],
       );
       if (mounted) {
-        _queuePdfPopup(t('PDF sent to share sheet', 'Naipadala ang PDF'));
+        _queuePdfPopup(pdfExportDoneMessage(action, savedTo));
       }
     } catch (e) {
       if (mounted) {
@@ -705,7 +716,7 @@ class _AuditLogDetailDialog extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(t('Audit entry', 'Audit Entry'),
+                  child: Text(t('Audit Entry', 'Audit Entry'),
                       style: TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 18,
@@ -762,7 +773,7 @@ class _AuditLogDetailDialog extends StatelessWidget {
                   icon: log.pendingSync
                       ? Icons.schedule_rounded
                       : Icons.check_circle_rounded,
-                  label: t('Sync status', 'Katayuan ng Sync'),
+                  label: t('Sync Status', 'Katayuan ng Sync'),
                   value: log.pendingSync
                       ? t('Pending sync', 'Naghihintay mag-sync')
                       : t('Synced', 'Na-sync na'),

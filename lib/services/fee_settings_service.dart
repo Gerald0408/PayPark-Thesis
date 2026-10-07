@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/constants.dart';
+import '../core/parking_fee.dart';
 import '../models/transaction.dart';
 import 'firestore_service.dart';
 
@@ -71,6 +72,17 @@ class FeeSettingsService extends ChangeNotifier {
             if (data?['${t.name}_updated_at'] is Timestamp)
               t.name: (data!['${t.name}_updated_at'] as Timestamp).toDate(),
         };
+        _extraOverrides = {
+          for (final t in VehicleType.values)
+            if (data?['${t.name}_extra_hour'] is num)
+              t.name: (data!['${t.name}_extra_hour'] as num).toDouble(),
+        };
+        _baseHours = data?['included_hours'] is num
+            ? (data!['included_hours'] as num).toInt()
+            : null;
+        _lostTicketFee = data?['lost_ticket_fee'] is num
+            ? (data!['lost_ticket_fee'] as num).toDouble()
+            : null;
         notifyListeners();
       },
       onError: (Object e) =>
@@ -88,6 +100,93 @@ class FeeSettingsService extends ChangeNotifier {
   /// override if one's been set, otherwise the ordinance default baked
   /// into [VehicleType].
   double feeFor(VehicleType type) => _overrides[type.name] ?? type.fee;
+
+  // ---------------------------------------------------------------------
+  // Time-based charges: the check-in fee covers the first [baseHours];
+  // each extra hour started after that costs [extraHourFeeFor], collected
+  // at check-out.
+  // ---------------------------------------------------------------------
+
+  Map<String, double> _extraOverrides = {};
+  int? _baseHours;
+
+  // Stored as 'included_hours' (not the old 'base_hours'), so a value
+  // saved under the previous 2-hour scheme can't override the new
+  // default.
+  int get baseHours => _baseHours ?? kDefaultBaseHours;
+
+  double? _lostTicketFee;
+  double get lostTicketFee => _lostTicketFee ?? kDefaultLostTicketFee;
+
+  /// The full price of a visit by [type] from [timeIn] to [timeOut] at
+  /// the current rates — see computeParkingFee for the rules.
+  ParkingFee quote(
+    VehicleType type,
+    DateTime timeIn,
+    DateTime timeOut, {
+    bool lostTicket = false,
+    double discount = 0,
+  }) =>
+      computeParkingFee(
+        stay: timeOut.difference(timeIn),
+        baseFee: feeFor(type),
+        baseHours: baseHours,
+        extraRate: extraHourFeeFor(type),
+        lostTicketFee: lostTicket ? lostTicketFee : 0,
+        discount: discount,
+      );
+
+  Future<void> setLostTicketFee(double fee) async {
+    final previous = lostTicketFee;
+    await _doc.set({'lost_ticket_fee': fee}, SetOptions(merge: true));
+    _lostTicketFee = fee;
+    notifyListeners();
+    await YosRepository.instance.logAudit(
+      AuditAction.feeUpdated,
+      'Lost Ticket Fee set to ₱${fee.toStringAsFixed(0)}',
+      previousValue: previous,
+      newValue: fee,
+    );
+  }
+
+  double extraHourFeeFor(VehicleType type) =>
+      _extraOverrides[type.name] ?? type.extraHourFee;
+
+  /// Extra hours and amount owed at check-out for a [stay] by [type].
+  /// Every hour *started* past [baseHours] counts as a full hour — e.g.
+  /// with 2 base hours, 2h00m owes nothing and 2h01m owes one hour.
+  OvertimeCharge overtimeFor(VehicleType type, Duration stay) {
+    final overMinutes = stay.inMinutes - baseHours * 60;
+    final hours = overMinutes <= 0 ? 0 : (overMinutes / 60).ceil();
+    final rate = extraHourFeeFor(type);
+    return OvertimeCharge(hours: hours, rate: rate, amount: hours * rate);
+  }
+
+  Future<void> setExtraHourFee(VehicleType type, double fee) async {
+    final previous = extraHourFeeFor(type);
+    await _doc.set({'${type.name}_extra_hour': fee}, SetOptions(merge: true));
+    _extraOverrides = {..._extraOverrides, type.name: fee};
+    notifyListeners();
+    await YosRepository.instance.logAudit(
+      AuditAction.feeUpdated,
+      '${type.label} Extra Hours fee set to ₱${fee.toStringAsFixed(0)}',
+      previousValue: previous,
+      newValue: fee,
+    );
+  }
+
+  Future<void> setBaseHours(int hours) async {
+    final previous = baseHours;
+    await _doc.set({'included_hours': hours}, SetOptions(merge: true));
+    _baseHours = hours;
+    notifyListeners();
+    await YosRepository.instance.logAudit(
+      AuditAction.feeUpdated,
+      'Base fee now covers the first $hours Hours',
+      previousValue: previous.toDouble(),
+      newValue: hours.toDouble(),
+    );
+  }
 
   bool hasOverride(VehicleType type) => _overrides.containsKey(type.name);
 
@@ -129,4 +228,14 @@ class FeeSettingsService extends ChangeNotifier {
       newValue: fee,
     );
   }
+}
+
+/// What a stay owes past the hours the check-in fee covers.
+class OvertimeCharge {
+  const OvertimeCharge(
+      {required this.hours, required this.rate, required this.amount});
+  final int hours;
+  final double rate;
+  final double amount;
+  bool get isDue => amount > 0;
 }

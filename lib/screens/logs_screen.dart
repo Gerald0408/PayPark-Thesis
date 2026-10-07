@@ -5,12 +5,16 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../core/constants.dart';
+import '../core/date_range.dart';
 import '../core/theme.dart';
 import '../models/transaction.dart';
+import '../services/error_log_service.dart';
+import '../services/fee_settings_service.dart';
 import '../services/firestore_service.dart';
 import '../services/locale_controller.dart';
 import '../services/pdf_export_service.dart';
 import '../services/printer_service.dart';
+import '../widgets/check_out_sheet.dart';
 import '../widgets/glow_effects.dart';
 import '../widgets/pdf_export_search_dialog.dart';
 import '../widgets/toast.dart';
@@ -57,25 +61,32 @@ class _LogsScreenState extends State<LogsScreen> {
         },
         itemLabel: (tx) => '${tx.trackingId} · ${tx.plateNumber} · '
             '${tx.driverName}',
+        dateOf: (tx) => tx.timestamp,
         onExport: _generatePdf,
       ),
     );
   }
 
-  Future<void> _generatePdf(List<ParkingTransaction> txs) async {
+  Future<void> _generatePdf(List<ParkingTransaction> txs, DateTimeRange? period,
+      PdfExportAction action) async {
     try {
       final dateFmt = DateFormat('MMM d, yyyy');
       final timeFmt = DateFormat('hh:mm:ss a');
-      final totalFee = txs.fold<double>(0, (s, tx) => s + tx.fee);
-      await PdfExportService.exportTable(
+      final totalFee = txs.fold<double>(0, (s, tx) => s + tx.totalPaid);
+      final savedTo = await PdfExportService.exportTable(
+        action: action,
         title: t('Transaction Logs', 'Mga Transaksyon'),
+        period: periodLabel(period),
         headers: [
           '#',
           t('Date', 'Petsa'),
-          t('Time', 'Oras'),
+          t('Time In', 'Pasok'),
+          t('Time Out', 'Labas'),
           t('Tracking ID', 'Tracking ID'),
           t('Plate', 'Plaka'),
           t('Driver', 'Driver'),
+          t('Collector', 'Kolektor'),
+          t('Paid Via', 'Paraan'),
           t('Fee', 'Bayad'),
           t('Status', 'Katayuan'),
         ],
@@ -85,24 +96,36 @@ class _LogsScreenState extends State<LogsScreen> {
               '${i + 1}',
               dateFmt.format(txs[i].timestamp),
               timeFmt.format(txs[i].timestamp),
+              txs[i].timeOut == null
+                  ? (txs[i].awaitingCheckout ? t('Parked', 'Nakaparada') : '-')
+                  : timeFmt.format(txs[i].timeOut!),
               txs[i].trackingId,
               txs[i].plateNumber,
               txs[i].driverName,
-              'PHP ${txs[i].fee.toStringAsFixed(0)}',
+              txs[i].collectorName ?? '-',
+              txs[i].paymentRef == null
+                  ? PaymentMethod.label(txs[i].paymentMethod)
+                  : '${PaymentMethod.label(txs[i].paymentMethod)} '
+                      '${txs[i].paymentRef}',
+              'PHP ${txs[i].totalPaid.toStringAsFixed(0)}',
               txs[i].pendingSync
                   ? t('Syncing', 'Nag-sync')
                   : t('Paid', 'Bayad'),
             ],
         ],
         summary: [
-          MapEntry(t('Total transactions', 'Kabuuang Transaksyon'),
-              '${txs.length}'),
-          MapEntry(t('Total collected', 'Kabuuang Nakolekta'),
+          MapEntry(
+              t('Total transactions', 'Kabuuang Transaksyon'), '${txs.length}'),
+          for (final e in amountsByMethod(txs).entries)
+            MapEntry(
+                '${t('Collected via', 'Nakolekta sa')} ${PaymentMethod.label(e.key)}',
+                'PHP ${e.value.toStringAsFixed(0)}'),
+          MapEntry(t('Total Collected', 'Kabuuang Nakolekta'),
               'PHP ${totalFee.toStringAsFixed(0)}'),
         ],
       );
       if (mounted) {
-        Toast.success(context, t('PDF sent to share sheet', 'Naipadala ang PDF'));
+        Toast.success(context, pdfExportDoneMessage(action, savedTo));
       }
     } catch (e) {
       if (mounted) {
@@ -135,7 +158,7 @@ class _LogsScreenState extends State<LogsScreen> {
   }
 }
 
-enum _TimeFilter { all, today, hour, month }
+enum _TimeFilter { all, today, hour, month, range }
 
 /// The actual search + time-filter + full transaction list — every entry
 /// ever logged (last week, yesterday, today, all of it; [allTransactions]
@@ -158,6 +181,11 @@ class TransactionLogView extends StatefulWidget {
 class TransactionLogViewState extends State<TransactionLogView> {
   final _search = TextEditingController();
   _TimeFilter _filter = _TimeFilter.all;
+
+  /// The days picked for [_TimeFilter.range] — only read while that
+  /// filter is active, kept otherwise so re-opening the picker starts
+  /// from the last range instead of a blank calendar.
+  DateTimeRange? _range;
   Timer? _auditDebounce;
 
   /// Caps how many (already filtered/searched) rows are shown at once —
@@ -200,7 +228,7 @@ class TransactionLogViewState extends State<TransactionLogView> {
       if (q.length >= 3) {
         _auditDebounce = Timer(const Duration(seconds: 2), () {
           YosRepository.instance
-              .logAudit(AuditAction.search, 'Searched logs for "$q"');
+              .logAudit(AuditAction.search, 'Searched Logs For "$q"');
         });
       }
     });
@@ -220,7 +248,9 @@ class TransactionLogViewState extends State<TransactionLogView> {
       final matchesQuery = q.isEmpty ||
           t.plateNumber.contains(q) ||
           t.trackingId.toUpperCase().contains(q) ||
-          t.driverName.toUpperCase().contains(q);
+          t.driverName.toUpperCase().contains(q) ||
+          (t.collectorName?.toUpperCase().contains(q) ?? false) ||
+          (t.paymentRef?.toUpperCase().contains(q) ?? false);
       final matchesTime = switch (_filter) {
         _TimeFilter.all => true,
         _TimeFilter.today =>
@@ -229,16 +259,49 @@ class TransactionLogViewState extends State<TransactionLogView> {
           t.timestamp.isAfter(now.subtract(const Duration(hours: 1))),
         _TimeFilter.month =>
           t.timestamp.isAfter(DateTime(now.year, now.month - 1, now.day)),
+        _TimeFilter.range =>
+          _range == null || inDateRange(t.timestamp, _range!),
       };
       return matchesQuery && matchesTime;
     }).toList();
   }
 
+  List<(_TimeFilter, String)> get _filterOptions => [
+        (_TimeFilter.all, t('All', 'Lahat')),
+        (_TimeFilter.today, t('Today', 'Ngayon')),
+        (_TimeFilter.hour, t('Last Hours', 'Huling Oras')),
+        (_TimeFilter.month, t('Last Month', 'Nakaraang Buwan')),
+        // Shows the picked days once a range is set, so the collapsed
+        // dropdown says which period the list is actually showing.
+        (
+          _TimeFilter.range,
+          _range == null
+              ? t('Date Range…', 'Saklaw ng petsa…')
+              : formatDateRange(_range!)
+        ),
+      ];
+
+  /// Picking "Date range…" from the filter dropdown opens the calendar
+  /// right away; cancelling it leaves the previous filter in place rather
+  /// than switching to a range that was never chosen. Re-selecting it
+  /// while already active re-opens the calendar to change the days.
+  Future<void> _onFilterChanged(_TimeFilter? v) async {
+    if (v == null) return;
+    if (v != _TimeFilter.range) {
+      setState(() => _filter = v);
+      return;
+    }
+    final picked = await pickDateRange(context, initial: _range);
+    if (picked == null || !mounted) return;
+    setState(() {
+      _range = picked;
+      _filter = _TimeFilter.range;
+    });
+  }
+
   List<ParkingTransaction> _applyLimit(List<ParkingTransaction> txs) {
     final limit = _limit;
-    return limit == null || txs.length <= limit
-        ? txs
-        : txs.sublist(0, limit);
+    return limit == null || txs.length <= limit ? txs : txs.sublist(0, limit);
   }
 
   @override
@@ -287,20 +350,20 @@ class TransactionLogViewState extends State<TransactionLogView> {
                       underline: const SizedBox.shrink(),
                       isDense: true,
                       items: [
-                        for (final (f, label) in [
-                          (_TimeFilter.all, t('All', 'Lahat')),
-                          (_TimeFilter.today, t('Today', 'Ngayon')),
-                          (_TimeFilter.hour, t('Last Hour', 'Huling Oras')),
-                          (_TimeFilter.month,
-                              t('Last Month', 'Nakaraang Buwan')),
-                        ])
+                        for (final (f, label) in _filterOptions)
                           DropdownMenuItem(value: f, child: Text(label)),
                       ],
-                      onChanged: (v) {
-                        if (v != null) setState(() => _filter = v);
-                      },
+                      // Only the selected label takes up room — the button
+                      // otherwise sizes itself to its widest option (the
+                      // picked date range), leaving a wide gap between a
+                      // short label like "All" and the arrow.
+                      selectedItemBuilder: (_) => [
+                        for (final (f, label) in _filterOptions)
+                          f == _filter ? Text(label) : const SizedBox.shrink(),
+                      ],
+                      onChanged: _onFilterChanged,
                     ),
-                    const SizedBox(width: 20),
+                    const SizedBox(width: 56),
                     Text(t('Show', 'Ipakita'),
                         style: TextStyle(
                             color: YosColors.sub,
@@ -350,12 +413,14 @@ class TransactionLogViewState extends State<TransactionLogView> {
                             size: 56, color: YosColors.sub),
                         const SizedBox(height: 12),
                         Text(
-                          _search.text.isEmpty
-                              ? t('No entries yet.\nLog a vehicle to start.',
-                                  'Wala pang entries.\nMag-log ng sasakyan para magsimula.')
-                              : t(
-                                  'No matches.\nTry a different plate or ID.',
-                                  'Walang tugma.\nSubukan ang ibang plaka o ID.'),
+                          _search.text.isEmpty && _filter == _TimeFilter.range
+                              ? t('No entries in this date range.',
+                                  'Walang entries sa saklaw na petsang ito.')
+                              : _search.text.isEmpty
+                                  ? t('No entries yet.\nLog a vehicle to start.',
+                                      'Wala pang entries.\nMag-log ng sasakyan para magsimula.')
+                                  : t('No matches.\nTry a different plate or ID.',
+                                      'Walang tugma.\nSubukan ang ibang plaka o ID.'),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                               color: YosColors.sub,
@@ -393,9 +458,15 @@ class _TxCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final date = DateFormat('MMM d, hh:mm a').format(tx.timestamp);
+    // In → out on one line once checked out, so the stay reads at a glance.
+    final date = tx.timeOut == null
+        ? DateFormat('MMM d, hh:mm a').format(tx.timestamp)
+        : '${DateFormat('MMM d, hh:mm a').format(tx.timestamp)} → '
+            '${DateFormat('hh:mm a').format(tx.timeOut!)}';
     final (statusLabel, statusColor) = tx.pendingSync
         ? (t('SYNCING', 'NAG-SYNC'), YosColors.warn)
+        : tx.awaitingCheckout
+            ? (t('PARKED', 'NAKAPARADA'), YosColors.accentDeep)
         : (t('PAID', 'BAYAD'), YosColors.good);
 
     return MergeSemantics(
@@ -488,7 +559,7 @@ class _TxCard extends StatelessWidget {
                             fontSize: 13,
                             fontWeight: FontWeight.w500)),
                     const Spacer(),
-                    Text('₱${tx.fee.toStringAsFixed(0)}',
+                    Text('₱${tx.totalPaid.toStringAsFixed(0)}',
                         style: TextStyle(
                             color: YosColors.ink,
                             fontWeight: FontWeight.w800,
@@ -521,29 +592,82 @@ class _TxDetailDialog extends StatefulWidget {
 class _TxDetailDialogState extends State<_TxDetailDialog> {
   bool _printing = false;
 
+  // Admins can view a transaction's details but not (re)print its receipt —
+  // printing stays a collector-only action.
+  late final Stream<bool> _isAdmin = YosRepository.instance.currentUserIsAdmin;
+
   Future<void> _print() async {
     final printer = PrinterService.instance;
     if (!printer.isConnected) {
-      Toast.warn(context, t('Connect a printer first', 'Kumonekta muna sa printer'));
+      Toast.warn(
+          context, t('Connect a printer first', 'Kumonekta muna sa printer'));
       return;
     }
     setState(() => _printing = true);
     try {
       final tx = widget.tx;
-      await printer.printParkingTicket(
-        trackingId: tx.trackingId,
-        driverName: tx.driverName,
-        plateNumber: tx.plateNumber,
-        vehicleType: tx.vehicleType,
-        zoneId: tx.zoneId,
-        fee: tx.fee,
-        timestamp: tx.timestamp,
-        header: kReceiptHeader,
-        footer: kOrdinanceRef,
-      );
+      if (tx.timeOut != null) {
+        // Already checked out: reprint the check-out receipt (with time
+        // in, time out and total time).
+        await printCheckOutReceipt(tx, reprint: true);
+      } else if (tx.isUnpaidTicket) {
+        // Still parked under time-in/time-out billing: reprint its
+        // time-in ticket (no price yet).
+        final fees = FeeSettingsService.instance;
+        final type = VehicleType.fromLabel(tx.vehicleType);
+        await printer.printTimeInTicket(
+          ticketNo: tx.trackingId,
+          plateNumber: tx.plateNumber,
+          vehicleType: tx.vehicleType,
+          driverName: tx.driverName,
+          zoneId: tx.zoneId,
+          timeIn: tx.timestamp,
+          rateLines: printer.rateLines(
+            baseFee: fees.feeFor(type),
+            baseHours: fees.baseHours,
+            extraRate: fees.extraHourFeeFor(type),
+          ),
+          lostTicketFee: fees.lostTicketFee,
+          header: kReceiptHeader,
+          extraLines: [
+            if (tx.geoShort != null) 'GPS ${tx.geoShort}',
+            if (tx.collectorName != null) 'Collector: ${tx.collectorName}',
+          ],
+          reprint: true,
+        );
+      } else {
+        await printer.printParkingTicket(
+          trackingId: tx.trackingId,
+          driverName: tx.driverName,
+          plateNumber: tx.plateNumber,
+          vehicleType: tx.vehicleType,
+          zoneId: tx.zoneId,
+          fee: tx.fee,
+          timestamp: tx.timestamp,
+          header: kReceiptHeader,
+          footer: kOrdinanceRef,
+          timeLines: [
+            ...printer.receiptTimeLines(tx.timestamp),
+            if (tx.geoShort != null) printer.pair('GPS', tx.geoShort!),
+          ],
+          paymentLines: printer.receiptPaymentLines(
+              PaymentMethod.label(tx.paymentMethod), tx.paymentRef),
+          // The collector who originally took the payment, not whoever is
+          // reprinting it — older entries without one just omit the line.
+          closingLines: [
+            if (tx.collectorName != null) 'Collector: ${tx.collectorName}',
+            ...kReceiptFooter,
+          ],
+          reprint: tx.printed,
+        );
+      }
+      YosRepository.instance.logAudit(AuditAction.printReceipt,
+          '${tx.printed ? 'Reprinted' : 'Printed'} receipt ${tx.trackingId}');
       HapticFeedback.heavyImpact();
-      if (mounted) Toast.success(context, t('Receipt printed', 'Na-print ang resibo'));
-    } catch (e) {
+      if (mounted)
+        Toast.success(context, t('Receipt printed', 'Na-print ang resibo'));
+    } catch (e, st) {
+      ErrorLogService.instance.record(e, st, where: 'reprint receipt');
       if (mounted) Toast.error(context, t('Print failed', 'Hindi na-print'));
     } finally {
       if (mounted) setState(() => _printing = false);
@@ -556,7 +680,10 @@ class _TxDetailDialogState extends State<_TxDetailDialog> {
     final date = DateFormat('MMM d, y · hh:mm a').format(tx.timestamp);
     final (statusLabel, statusColor) = tx.pendingSync
         ? (t('Syncing', 'Nag-sync'), YosColors.warn)
-        : (t('Paid', 'Bayad'), YosColors.good);
+        : tx.isUnpaidTicket
+            ? (t('Parked · pays at Time Out', 'Nakaparada · magbabayad sa paglabas'),
+                YosColors.warn)
+            : (t('Paid', 'Bayad'), YosColors.good);
     const radius = 24.0;
 
     return Dialog(
@@ -572,7 +699,8 @@ class _TxDetailDialogState extends State<_TxDetailDialog> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(t('Transaction Details', 'Detalye ng Transaksyon'),
+                  child: Text(
+                      t('Transaction Details', 'Detalye ng Transaksyon'),
                       style: TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 18,
@@ -586,106 +714,193 @@ class _TxDetailDialogState extends State<_TxDetailDialog> {
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-            child: Column(
-              children: [
-                _DetailRow(
-                    icon: Icons.receipt_long_rounded,
-                    label: t('Receipt ID', 'Receipt ID'),
-                    value: '#${tx.trackingId}'),
-                _DetailRow(
-                    icon: Icons.person_rounded,
-                    label: t('Driver', 'Driver'),
-                    value: tx.driverName),
-                _DetailRow(
-                    icon: Icons.directions_car_rounded,
-                    label: t('Plate · Vehicle', 'Plaka · Sasakyan'),
-                    value: '${tx.plateNumber} · ${tx.vehicleType}'),
-                _DetailRow(
-                    icon: Icons.place_rounded,
-                    label: t('Zone', 'Zone'),
-                    value: tx.zoneId),
-                _DetailRow(
-                    icon: Icons.schedule_rounded,
-                    label: t('Date & Time', 'Petsa at Oras'),
-                    value: date),
-                _DetailRow(
-                    icon: Icons.payments_rounded,
-                    label: t('Fee Collected', 'Naningil na Bayad'),
-                    value: tx.discount > 0
-                        ? '₱${tx.fee.toStringAsFixed(0)} (was '
-                            '₱${(tx.fee + tx.discount).toStringAsFixed(0)})'
-                        : '₱${tx.fee.toStringAsFixed(0)}'),
-                // Only shown once a redemption actually happened — most
-                // transactions have nothing here, so there's no "Discount:
-                // ₱0" clutter on the common case.
-                if (tx.discount > 0)
-                  _DetailRow(
-                      icon: Icons.redeem_rounded,
-                      label: t('Discount', 'Diskwento'),
-                      value: t(
-                          '-₱${tx.discount.toStringAsFixed(0)} (points redeemed)',
-                          '-₱${tx.discount.toStringAsFixed(0)} (na-redeem na points)'),
-                      valueColor: YosColors.good),
-                _DetailRow(
-                  icon: tx.pendingSync
-                      ? Icons.sync_rounded
-                      : Icons.check_circle_rounded,
-                  label: t('Status', 'Katayuan'),
-                  value: tx.printed
-                      ? '$statusLabel · ${t('Printed', 'Na-print')}'
-                      : statusLabel,
-                  valueColor: statusColor,
-                  isLast: true,
+          // Scrolls on short screens now that check-out adds rows.
+          Flexible(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: Column(
+                  children: [
+                    _DetailRow(
+                        icon: Icons.receipt_long_rounded,
+                        label: t('Receipt ID', 'Receipt ID'),
+                        value: '#${tx.trackingId}'),
+                    _DetailRow(
+                        icon: Icons.person_rounded,
+                        label: t('Driver', 'Driver'),
+                        value: tx.driverName),
+                    _DetailRow(
+                        icon: Icons.directions_car_rounded,
+                        label: t('Plate · Vehicle', 'Plaka · Sasakyan'),
+                        value: '${tx.plateNumber} · ${tx.vehicleType}'),
+                    _DetailRow(
+                        icon: Icons.place_rounded,
+                        label: t('Zone', 'Zone'),
+                        value: tx.zoneId),
+                    if (tx.geoShort != null)
+                      _DetailRow(
+                          icon: Icons.my_location_rounded,
+                          label: t('GPS Location', 'Lokasyon (GPS)'),
+                          value: tx.geoAccuracy == null
+                              ? tx.geoShort!
+                              : '${tx.geoShort} (±${tx.geoAccuracy!.round()} m)'),
+                    _DetailRow(
+                        icon: Icons.login_rounded,
+                        label: t('Time In', 'Oras ng pasok'),
+                        value: date),
+                    if (tx.tracksCheckout)
+                      _DetailRow(
+                        icon: Icons.logout_rounded,
+                        label: t('Time Out', 'Oras ng labas'),
+                        value: tx.timeOut == null
+                            ? t('Still parked · ${formatStay(tx.stayDuration)} so far',
+                                'Nakaparada pa · ${formatStay(tx.stayDuration)} na')
+                            : '${DateFormat('MMM d, y · hh:mm a').format(tx.timeOut!)}'
+                                ' · ${formatStay(tx.stayDuration)}',
+                        valueColor: tx.timeOut == null ? YosColors.warn : null,
+                      ),
+                    _DetailRow(
+                        icon: Icons.payments_rounded,
+                        label: t('Check-In Fee', 'Bayad sa pagpasok'),
+                        value: tx.discount > 0
+                            ? '₱${tx.fee.toStringAsFixed(0)} (was '
+                                '₱${(tx.fee + tx.discount).toStringAsFixed(0)})'
+                            : '₱${tx.fee.toStringAsFixed(0)}'),
+                    if (tx.extraFee > 0)
+                      _DetailRow(
+                        icon: Icons.more_time_rounded,
+                        label: t('Extra time (paid at check-out)',
+                            'Dagdag na oras (binayaran sa paglabas)'),
+                        value: '${tx.extraHours} Hours · '
+                            '₱${tx.extraFee.toStringAsFixed(0)} · '
+                            '${PaymentMethod.label(tx.extraPaymentMethod ?? tx.paymentMethod)}'
+                            '${tx.extraPaymentRef != null ? ' · Ref ${tx.extraPaymentRef}' : ''}'
+                            ' — total ₱${tx.totalPaid.toStringAsFixed(0)}',
+                        valueColor: YosColors.accentDeep,
+                      ),
+                    // Only shown once a redemption actually happened — most
+                    // transactions have nothing here, so there's no "Discount:
+                    // ₱0" clutter on the common case.
+                    _DetailRow(
+                        icon: tx.isDigital
+                            ? Icons.phone_iphone_rounded
+                            : Icons.account_balance_wallet_rounded,
+                        label: t('Paid Via', 'Binayaran sa'),
+                        value: tx.paymentRef == null
+                            ? PaymentMethod.label(tx.paymentMethod)
+                            : '${PaymentMethod.label(tx.paymentMethod)} · '
+                                'Ref ${tx.paymentRef}'),
+                    if (tx.collectorName != null)
+                      _DetailRow(
+                          icon: Icons.badge_rounded,
+                          label: t('Collector', 'Kolektor'),
+                          value: tx.collectorName!),
+                    if (tx.discount > 0)
+                      _DetailRow(
+                          icon: Icons.redeem_rounded,
+                          label: t('Discount', 'Diskwento'),
+                          value: t(
+                              '-₱${tx.discount.toStringAsFixed(0)} (points redeemed)',
+                              '-₱${tx.discount.toStringAsFixed(0)} (na-redeem na points)'),
+                          valueColor: YosColors.good),
+                    _DetailRow(
+                      icon: tx.pendingSync
+                          ? Icons.sync_rounded
+                          : Icons.check_circle_rounded,
+                      label: t('Status', 'Katayuan'),
+                      value: tx.printed
+                          ? '$statusLabel · ${t('Printed', 'Na-print')}'
+                          : statusLabel,
+                      valueColor: statusColor,
+                      isLast: true,
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
           // A standalone rounded (pill) button with its own margin, not
           // flush with the dialog's edges — matching the shape every other
           // button in this app uses, rather than merging into the dialog
           // chrome itself.
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-            child: Material(
-              color: YosColors.accent,
-              borderRadius: BorderRadius.circular(999),
-              child: InkWell(
-                onTap: _printing ? null : _print,
-                borderRadius: BorderRadius.circular(999),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  alignment: Alignment.center,
-                  child: _printing
-                      ? SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: YosColors.onAccent),
-                        )
-                      : Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.print_rounded,
-                                size: 18, color: YosColors.onAccent),
-                            const SizedBox(width: 8),
-                            Text(
-                                tx.printed
-                                    ? t('Reprint Receipt', 'I-reprint ang Resibo')
-                                    : t('Print Receipt', 'I-print ang Resibo'),
-                                style: TextStyle(
-                                    color: YosColors.onAccent,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 15)),
-                          ],
+          StreamBuilder<bool>(
+            stream: _isAdmin,
+            builder: (context, snap) {
+              // Hidden until the role is known so an admin never sees it flash.
+              if (snap.data != false) return const SizedBox(height: 20);
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Manual-entry vehicles (no card) check out from here.
+                  if (tx.awaitingCheckout)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                      child: SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final done = await showCheckOutSheet(context, tx) ==
+                                CheckOutOutcome.done;
+                            if (done && context.mounted) {
+                              Navigator.of(context).pop();
+                            }
+                          },
+                          icon: const Icon(Icons.logout_rounded),
+                          label: Text(t('Time Out & Collect Payment', 'Labas at singilin'),
+                              style: const TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.w800)),
                         ),
-                ),
-              ),
-            ),
+                      ),
+                    ),
+                  _printButton(tx),
+                ],
+              );
+            },
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _printButton(ParkingTransaction tx) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      child: Material(
+        color: YosColors.accent,
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          onTap: _printing ? null : _print,
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            alignment: Alignment.center,
+            child: _printing
+                ? SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: YosColors.onAccent),
+                  )
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.print_rounded,
+                          size: 18, color: YosColors.onAccent),
+                      const SizedBox(width: 8),
+                      Text(
+                          tx.printed
+                              ? t('Reprint Receipt', 'I-reprint ang Resibo')
+                              : t('Print Receipt', 'I-print ang Resibo'),
+                          style: TextStyle(
+                              color: YosColors.onAccent,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15)),
+                    ],
+                  ),
+          ),
+        ),
       ),
     );
   }

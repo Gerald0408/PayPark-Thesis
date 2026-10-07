@@ -8,6 +8,7 @@ import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platfor
 import 'package:image/image.dart' as img;
 import 'package:permission_handler/permission_handler.dart';
 
+import '../models/transaction.dart' show formatStay;
 import 'points_settings_service.dart' show formatPoints;
 
 /// Loyalty-points line for a receipt, for an RFID-enrolled vehicle only —
@@ -404,6 +405,243 @@ class PrinterService {
     await sendBytes(b);
   }
 
+  /// "Paid via" (and a digital payment's reference number) lines for a
+  /// receipt — shared by the printed paper and the on-screen preview so
+  /// they never disagree. [methodLabel] is PaymentMethod.label's output.
+  List<String> receiptPaymentLines(String methodLabel, String? ref) => [
+        _pair('Paid Via', methodLabel),
+        if (ref != null && ref.isNotEmpty) _pair('Ref no.', ref),
+      ];
+
+  /// "Time in" (and, once checked out, "Time out" + stay length) lines for
+  /// a receipt — shared by the printed paper and the on-screen preview.
+  /// A time out on a later day than the time in carries its date too.
+  List<String> receiptTimeLines(DateTime timeIn, {DateTime? timeOut}) {
+    String time(DateTime d) {
+      final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+      return '${_two(h)}:${_two(d.minute)} ${d.hour < 12 ? 'AM' : 'PM'}';
+    }
+
+    final sameDay = timeOut != null &&
+        timeOut.year == timeIn.year &&
+        timeOut.month == timeIn.month &&
+        timeOut.day == timeIn.day;
+    return [
+      _pair('Time In', time(timeIn)),
+      if (timeOut != null) ...[
+        _pair('Time Out',
+            sameDay ? time(timeOut) : '${_two(timeOut.month)}/${_two(timeOut.day)} ${time(timeOut)}'),
+        _pair('Total Time', formatStay(timeOut.difference(timeIn))),
+      ],
+    ];
+  }
+
+  /// Label/value line padded to the paper width — for callers building
+  /// their own [printReport] lines.
+  String pair(String label, String value) => _pair(label, value);
+
+  /// Full-width divider line, for [printReport] callers.
+  String get divider => _hr();
+
+  /// Plain-text report on thermal paper — e.g. the daily blotter. [title]
+  /// prints bold and centered, every line of [lines] as-is (callers keep
+  /// them within [lineWidth]; [pair] helps), then a timestamp.
+  Future<void> printReport(String title, List<String> lines) async {
+    final b = <int>[];
+    b.addAll(_init());
+    b.addAll(_align(1));
+    b.addAll(_bold(true));
+    for (final line in _wrap(title, lineWidth)) {
+      b.addAll(_text(line));
+    }
+    b.addAll(_bold(false));
+    b.addAll(_align(0));
+    b.addAll(_text(_hr()));
+    for (final line in lines) {
+      for (final wrapped in _wrap(line, lineWidth)) {
+        b.addAll(_text(wrapped));
+      }
+    }
+    b.addAll(_text(_hr()));
+    b.addAll(_align(1));
+    b.addAll(_text('Printed ${fmtDateTime(DateTime.now())}'));
+    b.addAll(_align(0));
+    b.addAll(_feed(3));
+    b.addAll(_cut());
+    await sendBytes(b);
+  }
+
+  // ---------------------------------------------------------------------
+  // Time-in ticket — what prints on the first tap. No price yet: the fee
+  // is worked out and paid at time out (see printParkingTicket for that
+  // full receipt).
+  // ---------------------------------------------------------------------
+
+  /// The time-in ticket's lines, for the on-screen preview. Same content
+  /// and order as [printTimeInTicket] (which adds the logo above and
+  /// prints the time in larger text).
+  List<String> timeInTicketLines({
+    required String ticketNo,
+    required String plateNumber,
+    required String vehicleType,
+    required String driverName,
+    required String zoneId,
+    required DateTime timeIn,
+    required List<String> rateLines,
+    required double lostTicketFee,
+    List<String> header = const [],
+    List<String> extraLines = const [],
+    /// Hours Selected / Expected Out / Estimated Fee — printed under the
+    /// time in.
+    List<String> planLines = const [],
+    bool reprint = false,
+  }) =>
+      [
+        ...(header.isEmpty ? ['CONCEPCION PAY PARKING'] : header),
+        'PARKING TICKET',
+        if (reprint) '*** REPRINT ***',
+        _hr(),
+        _pair('Ticket', ticketNo),
+        _pair('Plate', plateNumber),
+        _pair('Vehicle', vehicleType),
+        _pair('Driver', driverName),
+        _pair('Zone', zoneId.toUpperCase()),
+        _hr(),
+        'TIME IN',
+        _timeOfDay(timeIn),
+        _dateOnly(timeIn),
+        _hr(),
+        ...planLines,
+        if (planLines.isNotEmpty) _hr(),
+        ...rateLines,
+        _hr(),
+        'LOST TICKET FEE: PHP ${lostTicketFee.toStringAsFixed(2)}',
+        'Present This Ticket When Leaving',
+        'Pay At Time Out',
+        ...extraLines,
+        'KEEP THIS TICKET.',
+      ];
+
+  Future<void> printTimeInTicket({
+    required String ticketNo,
+    required String plateNumber,
+    required String vehicleType,
+    required String driverName,
+    required String zoneId,
+    required DateTime timeIn,
+    required List<String> rateLines,
+    required double lostTicketFee,
+    List<String> header = const [],
+    List<String> extraLines = const [],
+    List<String> planLines = const [],
+    bool reprint = false,
+  }) async {
+    final b = <int>[];
+    b.addAll(_init());
+    try {
+      final logo = await _buildLogoRaster();
+      if (logo.isNotEmpty) {
+        b.addAll(_align(1));
+        b.addAll(logo);
+        b.addAll(_feed(1));
+      }
+    } catch (e) {
+      debugPrint('[PrinterService] Logo raster skipped: $e');
+    }
+    b.addAll(_align(1));
+    b.addAll(_bold(true));
+    for (final line in header.isEmpty ? ['CONCEPCION PAY PARKING'] : header) {
+      b.addAll(_text(line));
+    }
+    b.addAll(_text('PARKING TICKET'));
+    if (reprint) b.addAll(_text('*** REPRINT ***'));
+    b.addAll(_bold(false));
+    b.addAll(_align(0));
+    b.addAll(_text(_hr()));
+    for (final line in [
+      _pair('Ticket', ticketNo),
+      _pair('Plate', plateNumber),
+      _pair('Vehicle', vehicleType),
+    ]) {
+      b.addAll(_text(line));
+    }
+    final driver = needsDriverWrap(driverName)
+        ? _abbreviateMiddleNames(driverName)
+        : driverName;
+    b.addAll(_text(_pair('Driver', driver)));
+    b.addAll(_text(_pair('Zone', zoneId.toUpperCase())));
+    b.addAll(_text(_hr()));
+
+    // The time in, big — the one thing this ticket is for.
+    b.addAll(_align(1));
+    b.addAll(_text('TIME IN'));
+    b.addAll(_bold(true));
+    b.addAll(_size(double_: true));
+    b.addAll(_text(_timeOfDay(timeIn)));
+    b.addAll(_size());
+    b.addAll(_bold(false));
+    b.addAll(_text(_dateOnly(timeIn)));
+    b.addAll(_align(0));
+    b.addAll(_text(_hr()));
+    for (final line in planLines) {
+      b.addAll(_text(line));
+    }
+    if (planLines.isNotEmpty) b.addAll(_text(_hr()));
+
+    for (final line in rateLines) {
+      b.addAll(_text(line));
+    }
+    b.addAll(_text(_hr()));
+    b.addAll(_align(1));
+    b.addAll(_bold(true));
+    b.addAll(_text('LOST TICKET FEE: PHP ${lostTicketFee.toStringAsFixed(2)}'));
+    b.addAll(_bold(false));
+    b.addAll(_text('Present This Ticket When Leaving'));
+    b.addAll(_text('Pay At Time Out'));
+    for (final line in extraLines) {
+      b.addAll(_text(line));
+    }
+    b.addAll(_text('KEEP THIS TICKET.'));
+    b.addAll(_align(0));
+    b.addAll(_feed(3));
+    b.addAll(_cut());
+    await sendBytes(b);
+  }
+
+  String _timeOfDay(DateTime d) {
+    final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    return '${_two(h)}:${_two(d.minute)} ${d.hour < 12 ? 'AM' : 'PM'}';
+  }
+
+  String _dateOnly(DateTime d) =>
+      '${_two(d.month)}/${_two(d.day)}/${d.year}';
+
+  /// The driver's chosen stay, for the time-in ticket: how many hours they
+  /// picked, when that ends, and what it would cost — a guide only; the
+  /// real fee is worked out from the actual time out.
+  List<String> planLines({
+    required int hours,
+    required DateTime expectedOut,
+    required double estimate,
+  }) =>
+      [
+        _pair('Hours Selected', '$hours Hours'),
+        _pair('Expected Out', _timeOfDay(expectedOut)),
+        _pair('Estimated Fee', 'PHP ${estimate.toStringAsFixed(2)}'),
+      ];
+
+  /// Rate lines for a ticket: what the base fee covers and the hourly rate
+  /// after — so the driver knows the price before they leave.
+  List<String> rateLines({
+    required double baseFee,
+    required int baseHours,
+    required double extraRate,
+  }) =>
+      [
+        _pair('First $baseHours Hours', 'PHP ${baseFee.toStringAsFixed(2)}'),
+        _pair('Each Hours After', 'PHP ${extraRate.toStringAsFixed(2)}'),
+      ];
+
   /// Prints a parking ticket from a ParkingTransaction's fields.
   ///
   /// The fee prints as "PHP" rather than the peso sign: 58 mm printers use
@@ -421,8 +659,16 @@ class PrinterService {
     String footer = '',
     List<String> closingLines = const [],
     ReceiptPoints? points,
+    List<String> paymentLines = const [],
+    bool reprint = false,
+    List<String> timeLines = const [],
+    String? banner,
   }) async {
     await sendBytes(await buildParkingTicketBytes(
+      paymentLines: paymentLines,
+      reprint: reprint,
+      timeLines: timeLines,
+      banner: banner,
       trackingId: trackingId,
       driverName: driverName,
       plateNumber: plateNumber,
@@ -466,20 +712,24 @@ class PrinterService {
     String footer = '',
     List<String> closingLines = const [],
     ReceiptPoints? points,
+    List<String> paymentLines = const [],
+    List<String> timeLines = const [],
   }) =>
       [
         _pair('Plate', plateNumber),
         _pair('Vehicle', vehicleType),
         _pair('Zone', zoneId.toUpperCase()),
+        ...timeLines,
         if (points != null) ..._pointsLines(points),
         _hr(),
         'PHP ${fee.toStringAsFixed(2)}',
         '(${_amountInWords(fee)})',
+        ...paymentLines,
         _hr(),
         fmtDateTime(timestamp),
         if (footer.isNotEmpty) footer,
         ...closingLines,
-        'Keep this receipt.',
+        'KEEP THIS RECEIPT.',
       ];
 
   /// Points lines for an RFID-enrolled vehicle — the Discount/Points
@@ -494,10 +744,10 @@ class PrinterService {
   List<String> _pointsLines(ReceiptPoints points) => [
         if (points.redeemed > 0) ...[
           _pair('Discount', '-PHP ${points.discountPesos.toStringAsFixed(2)}'),
-          _pair('Points redeemed', '-${formatPoints(points.redeemed)}'),
+          _pair('Points Redeemed', '-${formatPoints(points.redeemed)}'),
         ],
-        _pair('Points earned', '+${formatPoints(points.earned)}'),
-        _pair('Points balance', formatPoints(points.balance)),
+        _pair('Points Earned', '+${formatPoints(points.earned)}'),
+        _pair('Points Balances', formatPoints(points.balance)),
       ];
 
   /// Builds the ESC/POS bytes for a parking ticket without sending them.
@@ -514,6 +764,10 @@ class PrinterService {
     String footer = '',
     List<String> closingLines = const [],
     ReceiptPoints? points,
+    List<String> paymentLines = const [],
+    bool reprint = false,
+    List<String> timeLines = const [],
+    String? banner,
   }) async {
     final b = <int>[];
     b.addAll(_init());
@@ -542,6 +796,10 @@ class PrinterService {
         b.addAll(_text(line));
       }
     }
+    // A copy printed later from Transaction Logs — marked so it can't be
+    // passed off as a second, separate payment.
+    if (reprint) b.addAll(_text('*** REPRINT ***'));
+    if (banner != null) b.addAll(_text(banner));
     b.addAll(_bold(false));
     b.addAll(_align(0));
     b.addAll(_text(_hr()));
@@ -582,6 +840,9 @@ class PrinterService {
     b.addAll(_text(_pair('Plate', plateNumber)));
     b.addAll(_text(_pair('Vehicle', vehicleType)));
     b.addAll(_text(_pair('Zone', zoneId.toUpperCase())));
+    for (final line in timeLines) {
+      b.addAll(_text(line));
+    }
     if (points != null) {
       for (final line in _pointsLines(points)) {
         b.addAll(_text(line));
@@ -598,6 +859,9 @@ class PrinterService {
     b.addAll(_bold(false));
     b.addAll(_text('(${_amountInWords(fee)})'));
     b.addAll(_align(0));
+    for (final line in paymentLines) {
+      b.addAll(_text(line));
+    }
     b.addAll(_text(_hr()));
 
     // Footer
@@ -607,7 +871,7 @@ class PrinterService {
     for (final line in closingLines) {
       b.addAll(_text(line));
     }
-    b.addAll(_text('Keep this receipt.'));
+    b.addAll(_text('KEEP THIS RECEIPT.'));
     b.addAll(_align(0));
     b.addAll(_feed(3));
     b.addAll(_cut());

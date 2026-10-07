@@ -424,7 +424,7 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                         ),
                                         Text(
                                             t(
-                                                '@${c.username} · ${c.isAdmin ? "Admin" : "Collector"} · registered ${DateFormat('MMM d, y').format(c.createdAt)}',
+                                                '@${c.username} · ${c.isAdmin ? "Admin" : "Collector"} · Registered ${DateFormat('MMM d, y').format(c.createdAt)}',
                                                 '@${c.username} · ${c.isAdmin ? "Tagapangasiwa" : "Kolektor"} · nagparehistro noong ${DateFormat('MMM d, y').format(c.createdAt)}'),
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
@@ -493,7 +493,7 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                             leading: Icon(
                                                 Icons.lock_reset_rounded,
                                                 color: YosColors.accentDeep),
-                                            title: Text(t('Reset password',
+                                            title: Text(t('Reset Password',
                                                 'I-reset ang Password')),
                                             contentPadding: EdgeInsets.zero,
                                           ),
@@ -504,7 +504,7 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                             leading: const Icon(
                                                 Icons.person_remove_rounded,
                                                 color: YosColors.bad),
-                                            title: Text(t('Remove collector',
+                                            title: Text(t('Remove Collector',
                                                 'Alisin ang Kolektor')),
                                             contentPadding: EdgeInsets.zero,
                                           ),

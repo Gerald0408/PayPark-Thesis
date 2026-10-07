@@ -10,9 +10,9 @@ import '../services/points_settings_service.dart' show formatPoints;
 import '../services/registry_service.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/toast.dart';
+import '../widgets/visit_flow.dart';
 import '../widgets/glow_effects.dart';
 import 'registry_screen.dart';
-import 'vehicle_entry_screen.dart';
 
 enum _SortMode { pointsDesc, nameAsc }
 
@@ -93,22 +93,29 @@ class _RfidPointsScreenState extends State<RfidPointsScreen> {
   /// selected — reached from the points/discount popup's per-tier Redeem
   /// button (see _PointsDiscountDialog), so there's nothing left for the
   /// collector to configure, just confirm and print.
-  void _redeem(RegisteredVehicle v, int tier) {
-    final tx = YosRepository.instance.buildTransaction(
-      driverName: v.driverName,
-      plateNumber: v.plateNumber,
-      type: VehicleType.fromLabel(v.vehicleType),
-      zoneId: v.defaultZoneId,
-    );
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => ReceiptPreviewDrawer(
-        tx: tx,
-        registered: v,
-        redeemTier: tier,
-        onDone: () => Navigator.of(sheetContext).pop(),
+  Future<void> _redeem(RegisteredVehicle v, int tier) async {
+    final open = await YosRepository.instance.openVisitFor(v.plateNumber);
+    if (!mounted) return;
+    // Points come off the fee, which is paid at time out — a vehicle that
+    // isn't parked yet gets its time-in ticket first.
+    if (open == null) {
+      Toast.info(
+          context,
+          t('Points are used at TIME OUT. Time the vehicle in first.',
+              'Ginagamit ang points sa paglabas. I-time in muna ang sasakyan.'));
+    }
+    await runVisitFlow(
+      context,
+      open: open,
+      redeemTier: tier,
+      prepareCheckIn: () async => (
+        YosRepository.instance.buildTransaction(
+          driverName: v.driverName,
+          plateNumber: v.plateNumber,
+          type: VehicleType.fromLabel(v.vehicleType),
+          zoneId: v.defaultZoneId,
+        ),
+        v,
       ),
     );
   }
@@ -198,7 +205,7 @@ class _RfidPointsScreenState extends State<RfidPointsScreen> {
                       items: [
                         DropdownMenuItem(
                             value: _SortMode.pointsDesc,
-                            child: Text(t('Most points', 'Pinakamaraming Points'))),
+                            child: Text(t('Most Points', 'Pinakamaraming Points'))),
                         DropdownMenuItem(
                             value: _SortMode.nameAsc,
                             child: Text(t('Name A–Z', 'Pangalan A–Z'))),
@@ -414,7 +421,7 @@ class _PointsDiscountDialog extends StatelessWidget {
                                   fontSize: 24,
                                   fontWeight: FontWeight.w900,
                                   color: YosColors.accentDeep)),
-                          Text(t('current points balance', 'kasalukuyang balanse ng points'),
+                          Text(t('Current Points Balances', 'kasalukuyang balanse ng points'),
                               style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,

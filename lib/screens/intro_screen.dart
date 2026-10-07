@@ -18,9 +18,9 @@ class _IntroScreenState extends State<IntroScreen> {
   // A getter, not a static const list — t() reads the live language
   // setting, so this can't be computed once and cached.
   List<String> get _phrases => [
-        t('Log a vehicle in seconds', 'Mag-log ng sasakyan sa ilang segundo'),
-        t('Print receipts instantly', 'Mag-print ng resibo agad'),
-        t('Works even offline', 'Gumagana kahit walang internet'),
+        t('Log a Vehicle in Seconds', 'Mag-log ng sasakyan sa ilang segundo'),
+        t('Print Receipts Instantly', 'Mag-print ng resibo agad'),
+        t('Works Even Offline', 'Gumagana kahit walang internet'),
       ];
   int _i = 0;
 
@@ -123,7 +123,7 @@ class _IntroScreenState extends State<IntroScreen> {
                 PopIn(
                   delayMs: 200,
                   child: Text(
-                    t('Deliver more,\neasily.', 'Mag-deliver nang mas madali.'),
+                    t('Deliver More,\nEasily.', 'Mag-deliver nang mas madali.'),
                     style: text.displayLarge?.copyWith(fontSize: 44),
                   ),
                 ),
