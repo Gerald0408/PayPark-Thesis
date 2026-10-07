@@ -88,12 +88,13 @@ class DailyCollectionSummary {
 
   Map<String, double> get byMethod => amountsByMethod(transactions);
 
-  /// Collector name -> (count, total). Entries from before transactions
-  /// recorded a collector are grouped under "Unrecorded".
+  /// Collector name -> (count, total), credited to whoever took the money
+  /// (see ParkingTransaction.collectedByName). Entries from before
+  /// transactions recorded a collector are grouped under "Unrecorded".
   Map<String, (int, double)> get byCollector {
     final out = <String, (int, double)>{};
     for (final tx in transactions) {
-      final key = tx.collectorName ?? 'Unrecorded';
+      final key = tx.collectedByName ?? 'Unrecorded';
       final (c, s) = out[key] ?? (0, 0.0);
       out[key] = (c + 1, s + tx.totalPaid);
     }

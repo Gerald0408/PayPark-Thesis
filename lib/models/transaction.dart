@@ -24,6 +24,7 @@ class ParkingTransaction {
     this.rfidTagKey,
     this.timeOut,
     this.checkedOutByName,
+    this.checkedOutBy,
     this.tracksCheckout = true,
     this.extraHours = 0,
     this.extraFee = 0,
@@ -88,6 +89,18 @@ class ParkingTransaction {
   /// check-in; this only records the stay.
   final DateTime? timeOut;
   final String? checkedOutByName;
+
+  /// Uid of whoever did the time out — who took the money under
+  /// pay-at-time-out. Written by the check-out itself (see
+  /// YosRepository's time out), so it's read here but never in [toMap].
+  final String? checkedOutBy;
+
+  /// Who holds this visit's money: whoever timed it out (the fee is paid
+  /// at time out), else whoever timed it in. Shift summaries and the
+  /// blotter's By Collector totals both group on this, so they agree.
+  String? get collectedById => checkedOutBy ?? collectorId;
+  String? get collectedByName =>
+      checkedOutBy != null ? checkedOutByName : collectorName;
 
   /// False for transactions logged before check-out existed — those have
   /// no time out to record and must never look "still parked".
@@ -177,6 +190,7 @@ class ParkingTransaction {
         rfidTagKey: rfidTagKey ?? this.rfidTagKey,
         timeOut: timeOut ?? this.timeOut,
         checkedOutByName: checkedOutByName ?? this.checkedOutByName,
+        checkedOutBy: checkedOutBy,
         tracksCheckout: tracksCheckout,
         extraHours: extraHours ?? this.extraHours,
         extraFee: extraFee ?? this.extraFee,
@@ -249,6 +263,7 @@ class ParkingTransaction {
       rfidTagKey: d['rfid_tag_key'] as String?,
       timeOut: (d['time_out'] as Timestamp?)?.toDate(),
       checkedOutByName: _name(d['checked_out_by_name']),
+      checkedOutBy: d['checked_out_by'] as String?,
       tracksCheckout: d.containsKey('time_out'),
       extraHours: (d['extra_hours'] as num?)?.toInt() ?? 0,
       extraFee: (d['extra_fee'] as num?)?.toDouble() ?? 0,

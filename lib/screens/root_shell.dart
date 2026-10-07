@@ -8,6 +8,7 @@ import '../models/collector.dart';
 import '../services/firestore_service.dart';
 import '../services/locale_controller.dart';
 import '../widgets/app_dialog.dart';
+import '../widgets/shift_summary_dialog.dart';
 import 'dashboard_screen.dart';
 import 'face_enroll_screen.dart';
 import 'intro_screen.dart';
@@ -234,15 +235,19 @@ class _RootTabsState extends State<_RootTabs> {
   }
 
   Future<void> _confirmLogout() async {
-    final confirmed = await showAppConfirmDialog(
-      context,
-      title: 'Log Out?',
-      message: 'You\'ll need to sign in again to start your next '
-          'collection.',
-      confirmLabel: 'Log Out',
-      confirmIcon: Icons.logout_rounded,
-      confirmColor: YosColors.bad,
-    );
+    // A collector ends their shift on their own totals — what they should
+    // be handing over — before confirming.
+    final confirmed = _isAdmin
+        ? await showAppConfirmDialog(
+            context,
+            title: 'Log Out?',
+            message: 'You\'ll need to sign in again to start your next '
+                'collection.',
+            confirmLabel: 'Log Out',
+            confirmIcon: Icons.logout_rounded,
+            confirmColor: YosColors.bad,
+          )
+        : await showShiftSummaryDialog(context, forLogout: true);
     if (confirmed != true) return;
     await YosRepository.instance.logout();
     if (!mounted) return;

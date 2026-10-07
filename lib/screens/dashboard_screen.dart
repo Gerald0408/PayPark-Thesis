@@ -16,13 +16,15 @@ import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
 import '../widgets/odometer_counter.dart';
 import '../widgets/reset_password_dialog.dart';
-import 'access_requests_screen.dart';
+import '../widgets/visit_flow.dart';
 import 'audit_screen.dart';
 import 'blotter_screen.dart';
 import 'error_logs_screen.dart';
 import 'fees_screen.dart';
 import 'logs_screen.dart';
+import 'notifications_screen.dart';
 import 'registry_screen.dart';
+import 'reports_screen.dart';
 import 'rfid_points_screen.dart';
 import 'rfid_scan_screen.dart';
 import 'vehicle_entry_screen.dart';
@@ -55,6 +57,85 @@ class _DashboardScreenState extends State<DashboardScreen>
   List<AccessRequest> _pendingRequests = const [];
   StreamSubscription<bool>? _adminSub;
   StreamSubscription<List<AccessRequest>>? _requestsSub;
+
+  // Admin-only overstay alerts for the bell — see NotificationsScreen.
+  // The timer re-counts every minute since overstay grows with the clock.
+  List<ParkingTransaction> _parked = const [];
+  StreamSubscription<List<ParkingTransaction>>? _parkedSub;
+  Timer? _overstayTick;
+
+  int get _overstayCount {
+    final now = DateTime.now();
+    return _parked.where((tx) => overstayOf(tx, now) != null).length;
+  }
+
+  // Pop-up reminders: a vehicle pops up the moment it overstays, then
+  // again every [_remindEvery] until it's timed out (it drops out of
+  // [_parked] then). Keyed by trackingId; one dialog at a time.
+  static const _remindEvery = Duration(minutes: 30);
+  final Map<String, DateTime> _lastAlerted = {};
+  bool _alertOpen = false;
+
+  void _checkOverstayAlerts() {
+    if (_alertOpen || !mounted) return;
+    final now = DateTime.now();
+    final due = [
+      for (final tx in _parked)
+        if (overstayOf(tx, now) case final d?)
+          if (_lastAlerted[tx.trackingId] == null ||
+              now.difference(_lastAlerted[tx.trackingId]!) >= _remindEvery)
+            (tx, d),
+    ]..sort((a, b) => b.$2.compareTo(a.$2));
+    if (due.isEmpty) return;
+    for (final (tx, _) in due) {
+      _lastAlerted[tx.trackingId] = now;
+    }
+    _alertOpen = true;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.timer_off_rounded, color: YosColors.bad),
+        title: Text(t('Overstay Alert', 'Lumampas sa Oras'),
+            style: const TextStyle(fontWeight: FontWeight.w800)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final (tx, d) in due.take(3))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Text(
+                    t('${tx.plateNumber} · ${tx.vehicleType} — Over by ${formatStay(d)}',
+                        '${tx.plateNumber} · ${tx.vehicleType} — Lampas ng ${formatStay(d)}'),
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+              ),
+            if (due.length > 3)
+              Text(t('and ${due.length - 3} More', 'at ${due.length - 3} pa'),
+                  style: TextStyle(color: YosColors.sub)),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(t('Later', 'Mamaya'))),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              if (due.length == 1) {
+                runVisitFlow(context,
+                    open: due.first.$1, prepareCheckIn: () async => null);
+              } else {
+                _open(NotificationsScreen(isAdmin: _isAdmin));
+              }
+            },
+            child: Text(due.length == 1
+                ? t('Time Out', 'Labas')
+                : t('View All', 'Tingnan Lahat')),
+          ),
+        ],
+      ),
+    ).whenComplete(() => _alertOpen = false);
+  }
 
   // RFID tap-to-receipt, right from the dashboard — no need to open Print
   // receipt first. The _rfid field/focus catches a directly-connected
@@ -97,6 +178,24 @@ class _DashboardScreenState extends State<DashboardScreen>
               )
             : null;
         if (!v && mounted) setState(() => _pendingRequests = const []);
+        // Overstay alerts go to admins and collectors alike — re-subscribed
+        // here so a fresh sign-in's token is in place before the read.
+        _parkedSub?.cancel();
+        _overstayTick?.cancel();
+        _parkedSub = repo.parkedVehicles().listen(
+          (list) {
+            if (!mounted) return;
+            setState(() => _parked = list);
+            _checkOverstayAlerts();
+          },
+          onError: (Object e) =>
+              debugPrint('parkedVehicles stream error (ignored): $e'),
+        );
+        _overstayTick = Timer.periodic(const Duration(minutes: 1), (_) {
+          if (!mounted) return;
+          setState(() {});
+          _checkOverstayAlerts();
+        });
       },
       // Dashboard mounts immediately inside RootShell's IndexedStack,
       // including right after a brand-new sign-in — the underlying read
@@ -149,6 +248,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     repo.removeListener(_onChange);
     _adminSub?.cancel();
     _requestsSub?.cancel();
+    _parkedSub?.cancel();
+    _overstayTick?.cancel();
     _rfid.dispose();
     _rfidFocus.dispose();
     super.dispose();
@@ -363,20 +464,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   // sit here is gone — the app is light-mode
                                   // only now, by request.
                                   final buttons = <Widget>[
-                                    // Collectors never see this — only an
-                                    // admin can read access_requests at all
-                                    // (see firestore.rules), so there's
-                                    // nothing behind it for a non-admin
-                                    // session to open anyway.
-                                    if (_isAdmin)
-                                      _NotificationButton(
-                                        hasNotifications:
-                                            _pendingRequests.isNotEmpty,
-                                        onTap: () => Navigator.of(context).push(
-                                            MaterialPageRoute(
-                                                builder: (_) =>
-                                                    const AccessRequestsScreen())),
-                                      ),
+                                    // Everyone gets overstay alerts; access
+                                    // requests are admin-only (only an admin
+                                    // can read access_requests — see
+                                    // firestore.rules).
+                                    _NotificationButton(
+                                      count: (_isAdmin
+                                              ? _pendingRequests.length
+                                              : 0) +
+                                          _overstayCount,
+                                      // _open hands the RFID capture field
+                                      // its focus back afterwards.
+                                      onTap: () => _open(NotificationsScreen(
+                                          isAdmin: _isAdmin)),
+                                    ),
                                   ];
 
                                   return Row(
@@ -613,8 +714,14 @@ class _DashboardScreenState extends State<DashboardScreen>
         _NavTile(
           icon: Icons.menu_book_rounded,
           title: t('Daily Blotter', 'Blotter'),
-          onTap: () => _open(const BlotterScreen()),
+          onTap: () => _open(BlotterScreen(isAdmin: _isAdmin)),
         ),
+        if (_isAdmin)
+          _NavTile(
+            icon: Icons.bar_chart_rounded,
+            title: t('Collection Reports', 'Ulat ng Koleksyon'),
+            onTap: () => _open(const ReportsScreen()),
+          ),
         // TEMPORARY — see lib/dev/dev_flags.dart.
         if (kEnablePricingTestTool)
           _NavTile(
@@ -1163,13 +1270,12 @@ class _PendingResetsCard extends StatelessWidget {
   }
 }
 
-/// Bell icon with a small dot badge when there are pending access
-/// requests — sits at the top-right of the dashboard's accent hero
-/// header.
+/// Bell icon with a red count badge for pending access requests plus
+/// overstaying vehicles — sits at the top-right of the dashboard's accent
+/// hero header.
 class _NotificationButton extends StatelessWidget {
-  const _NotificationButton(
-      {required this.hasNotifications, required this.onTap});
-  final bool hasNotifications;
+  const _NotificationButton({required this.count, required this.onTap});
+  final int count;
   final VoidCallback onTap;
 
   @override
@@ -1196,18 +1302,25 @@ class _NotificationButton extends StatelessWidget {
               child: Icon(Icons.notifications_rounded,
                   size: 18, color: YosColors.onAccentSoft),
             ),
-            if (hasNotifications)
+            if (count > 0)
               Positioned(
-                top: 5,
-                right: 6,
+                top: -4,
+                right: -4,
                 child: Container(
-                  width: 8,
-                  height: 8,
+                  constraints:
+                      const BoxConstraints(minWidth: 18, minHeight: 18),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: YosColors.accentSoft,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: YosColors.accentDeep, width: 1.5),
+                    color: YosColors.bad,
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(color: Colors.white, width: 1.5),
                   ),
+                  child: Text(count > 99 ? '99+' : '$count',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800)),
                 ),
               ),
           ],

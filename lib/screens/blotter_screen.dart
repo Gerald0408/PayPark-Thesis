@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -14,6 +15,7 @@ import '../services/printer_service.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
 import '../widgets/pdf_export_search_dialog.dart';
+import '../widgets/shift_summary_dialog.dart';
 import '../widgets/toast.dart';
 
 /// Daily blotter: one page per day, like the barangay's paper logbook —
@@ -22,7 +24,10 @@ import '../widgets/toast.dart';
 /// oldest first. Printable on the thermal printer or exportable as PDF
 /// for the end-of-day turnover.
 class BlotterScreen extends StatefulWidget {
-  const BlotterScreen({super.key});
+  const BlotterScreen({super.key, this.isAdmin = false});
+
+  /// Admins see only the whole day; collectors also get their own shift.
+  final bool isAdmin;
 
   @override
   State<BlotterScreen> createState() => _BlotterScreenState();
@@ -277,7 +282,20 @@ class _BlotterScreenState extends State<BlotterScreen> {
                         child: Center(child: CircularProgressIndicator()));
                   }
                   _latestTxs = snap.data!;
-                  return _SummaryCard(summary: DailyCollectionSummary(snap.data!));
+                  final uid = FirebaseAuth.instance.currentUser?.uid;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Collectors see their own shift first — what they
+                      // hand over — then the whole day.
+                      if (!widget.isAdmin && uid != null) ...[
+                        ShiftSummaryCard(
+                            summary: ShiftSummary(snap.data!, uid)),
+                        const SizedBox(height: 14),
+                      ],
+                      _SummaryCard(summary: DailyCollectionSummary(snap.data!)),
+                    ],
+                  );
                 },
               ),
               const SizedBox(height: 20),

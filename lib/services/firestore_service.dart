@@ -926,6 +926,34 @@ class YosRepository extends ChangeNotifier {
     return snap.docs.map(ParkingTransaction.fromDoc).toList();
   }
 
+  /// One-time fetch of every transaction with a time in from [start] up to
+  /// (not including) [end] — the Monthly/Yearly Report's data. A single
+  /// range filter on one field, so no composite index.
+  Future<List<ParkingTransaction>> transactionsBetween(
+      DateTime start, DateTime end) async {
+    final snap = await _tx
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('timestamp', isLessThan: Timestamp.fromDate(end))
+        .get();
+    return snap.docs.map(ParkingTransaction.fromDoc).toList();
+  }
+
+  /// Live list of vehicles still parked (no time out), oldest time in
+  /// first — feeds the admin's overstay notifications. Same 24-hour cutoff
+  /// as [openVisitFor]: an older open visit is a forgotten check-out, not
+  /// a car still in the lot. One equality filter, so no composite index.
+  Stream<List<ParkingTransaction>> parkedVehicles() => _tx
+      .where('time_out', isNull: true)
+      .snapshots(includeMetadataChanges: true)
+      .map((s) {
+        final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+        return s.docs
+            .map(ParkingTransaction.fromDoc)
+            .where((tx) => tx.awaitingCheckout && tx.timestamp.isAfter(cutoff))
+            .toList()
+          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      });
+
   /// Full history stream, newest first.
   Stream<List<ParkingTransaction>> allTransactions({int limit = 300}) => _tx
       .orderBy('timestamp', descending: true)
