@@ -28,6 +28,14 @@ class YosColors {
   static const bool _dark = false;
   static bool get isDark => _dark;
 
+  // ---- Super Admin colors ----
+  // The Super Admin's whole app is gold (header, buttons, highlights, a warm
+  // background); Admins and Collectors keep plain navy. Set by
+  // RoleColors (widgets/role_colors.dart) once the signed-in role is
+  // known, which then repaints the app in place — nothing is reloaded.
+  static final ValueNotifier<bool> superAdmin = ValueNotifier(false);
+  static bool get _gold => superAdmin.value;
+
   // ---- Canvas & ink (brightness-aware) ----
   // Every neutral below is now a blue-tinted equivalent of what it
   // replaced — light mode's used to be warm-cream-neutral, dark mode's
@@ -41,7 +49,8 @@ class YosColors {
   // doesn't name a neutral-gray or a dark-canvas stop.
   static const Color bgLight = Color(0xFFF2F4F8); // design's light gray
   static const Color bgDark = Color(0xFF10141F); // derived dark navy-black
-  static Color get bg => _dark ? bgDark : bgLight;
+  static Color get bg =>
+      _dark ? bgDark : (_gold ? const Color(0xFFF6F2E8) : bgLight);
 
   static const Color bgDeepLight = Color(0xFFFFFFFF); // bottom nav bar
   static const Color bgDeepDark = Color(0xFF171D30);
@@ -101,9 +110,16 @@ class YosColors {
   static const Color accentDark = Color(0xFFD0E3FF); // pale bright blue
   static const Color accentSoftDark = Color(0xFFF9FCFF); // palest wash
 
-  static Color get accent => _dark ? accentDark : accentLight;
-  static Color get accentDeep => _dark ? accentDeepDark : accentDeepLight;
-  static Color get accentSoft => _dark ? accentSoftDark : accentSoftLight;
+  // Super Admin: gold (dark enough for white text) instead of navy.
+  static Color get accent =>
+      _dark ? accentDark : (_gold ? const Color(0xFF8C6D0F) : accentLight);
+  // Super Admin: deep gold (headers, badges) — the whole app gold.
+  static Color get accentDeep => _dark
+      ? accentDeepDark
+      : (_gold ? const Color(0xFF5E4808) : accentDeepLight);
+  static Color get accentSoft => _dark
+      ? accentSoftDark
+      : (_gold ? const Color(0xFFFBF3DC) : accentSoftLight);
 
   /// 20%-alpha version of the current mode's [accent] — derived so it
   /// always tracks whichever accent is live.
@@ -137,11 +153,13 @@ class YosColors {
   // has always used.
   static const Color mintLight = Color(0xFFF7F8FB); // palest gray
   static const Color mintDark = Color(0xFF16224A); // muted dark navy
-  static Color get mint => _dark ? mintDark : mintLight;
+  static Color get mint =>
+      _dark ? mintDark : (_gold ? const Color(0xFFFFFCF4) : mintLight);
 
   static const Color mossLight = Color(0xFFE6EAF5); // pale blue-gray
   static const Color mossDark = Color(0xFF081F5C); // deep navy (palette stop)
-  static Color get moss => _dark ? mossDark : mossLight;
+  static Color get moss =>
+      _dark ? mossDark : (_gold ? const Color(0xFFF3E8C8) : mossLight);
 
   // Legacy aliases from the earlier six-shade (then three-shade) palette
   // — collapsed onto the two above so every existing call site keeps
@@ -235,7 +253,7 @@ class YosTheme {
         ? ThemeData.dark(useMaterial3: true)
         : ThemeData.light(useMaterial3: true);
 
-    final bgColor = dark ? YosColors.bgDark : YosColors.bgLight;
+    final bgColor = YosColors.bg; // warm cream for the Super Admin
     final bgDeepColor = dark ? YosColors.bgDeepDark : YosColors.bgDeepLight;
     final surfaceColor = dark ? YosColors.surfaceDark : YosColors.surfaceLight;
     final surfaceHighColor =
