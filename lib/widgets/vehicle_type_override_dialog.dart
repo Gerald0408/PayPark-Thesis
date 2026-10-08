@@ -412,7 +412,10 @@ class _AddVehicleTypeSheetState extends State<_AddVehicleTypeSheet> {
       Navigator.of(context).pop(saved);
     } catch (e) {
       if (!mounted) return;
-      Toast.failure(context, t("Couldn't save this vehicle.", 'Hindi na-save ang sasakyan.'), e);
+      Toast.error(
+          context,
+          t("Couldn't save this vehicle: $e",
+              'Hindi na-save ang sasakyan: $e'));
     } finally {
       if (mounted) setState(() => _saving = false);
     }

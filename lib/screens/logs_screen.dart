@@ -129,7 +129,8 @@ class _LogsScreenState extends State<LogsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        Toast.failure(context, t("Couldn't export PDF.", 'Hindi na-export ang PDF.'), e);
+        Toast.error(context,
+            t("Couldn't export PDF: $e", 'Hindi na-export ang PDF: $e'));
       }
     }
   }

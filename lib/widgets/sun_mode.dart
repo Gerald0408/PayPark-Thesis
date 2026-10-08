@@ -20,9 +20,6 @@ class _SunModeSwitcherState extends State<SunModeSwitcher> {
     super.initState();
     LightController.instance.addListener(_onLight);
     LightController.instance.start();
-    // Collectors' larger text: only this wrapper rebuilds on a role
-    // change (the screens below are kept, not remounted).
-    YosColors.role.addListener(_onLight);
   }
 
   void _onLight() => setState(() {});
@@ -30,7 +27,6 @@ class _SunModeSwitcherState extends State<SunModeSwitcher> {
   @override
   void dispose() {
     LightController.instance.removeListener(_onLight);
-    YosColors.role.removeListener(_onLight);
     super.dispose();
   }
 
@@ -59,17 +55,10 @@ class _SunModeSwitcherState extends State<SunModeSwitcher> {
     // fired. Keeping the wrapper structure constant and only swapping
     // the data lets InheritedWidget's own update mechanism handle the
     // change safely, the way it's designed to.
-    // Collectors get 10% larger text by default (easier at the curb, on
-    // older phones); sun mode adds its own boost on top. Builds on the
-    // phone's own text-size setting rather than replacing it.
-    final collector = YosColors.role.value == ThemeRole.collector;
-    final factor = (collector ? 1.1 : 1.0) * (sun ? 1.14 : 1.0);
-    final base = baseMediaQuery.textScaler.scale(1);
     return MediaQuery(
-      data: factor == 1.0
-          ? baseMediaQuery
-          : baseMediaQuery.copyWith(
-              textScaler: TextScaler.linear(base * factor)),
+      data: sun
+          ? baseMediaQuery.copyWith(textScaler: const TextScaler.linear(1.14))
+          : baseMediaQuery,
       child: Theme(
         data: sun
             ? baseTheme.copyWith(

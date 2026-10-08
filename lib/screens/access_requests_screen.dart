@@ -48,7 +48,7 @@ class _AccessRequestsScreenState extends State<AccessRequestsScreen> {
       }
     } catch (e) {
       if (context.mounted) {
-        Toast.failure(context, t("Couldn't dismiss.", 'Hindi ma-dismiss.'), e);
+        Toast.error(context, t('Couldn\'t dismiss: $e', 'Hindi ma-dismiss: $e'));
       }
     }
   }

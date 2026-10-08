@@ -100,7 +100,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        Toast.failure(context, t('Test failed.', 'Nabigo ang test.'), e);
+        Toast.error(context, t('Test failed: $e', 'Nabigo ang test: $e'));
       }
     } finally {
       if (mounted) setState(() => _testing = false);

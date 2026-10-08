@@ -75,7 +75,8 @@ class _PaymentMethodPickerState extends State<PaymentMethodPicker> {
       }
     } catch (e) {
       if (mounted) {
-        Toast.failure(context, t("Couldn't read the photo.", 'Hindi mabasa ang litrato.'), e);
+        Toast.error(context,
+            t("Couldn't read the photo: $e", 'Hindi mabasa ang litrato: $e'));
       }
     }
     if (!mounted) return;

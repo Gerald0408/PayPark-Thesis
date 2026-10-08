@@ -85,14 +85,6 @@ const List<Zone> kZones = [
 /// Ordinance reference shown in the fee matrix screen.
 const String kOrdinanceRef = 'Municipal Ordinance No. 2024-07';
 
-/// Letterhead of the time-out receipt (see PrinterService.
-/// printTimeOutReceipt) — each line fits the 32-column paper.
-const List<String> kReceiptLetterhead = [
-  'BARANGAY SAN NICOLAS POBLACION',
-  'Concepcion, Tarlac',
-  'Official Receipt - Vehicle Fee',
-];
-
 /// Issuing barangay — printed as the letterhead on every exported PDF (see
 /// PdfExportService) alongside the barangay seal (assets/icon/logo.png).
 const String kOrgName = 'PayPark';

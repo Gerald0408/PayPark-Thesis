@@ -13,7 +13,7 @@ import '../widgets/glow_effects.dart';
 import '../widgets/pdf_export_search_dialog.dart';
 import '../widgets/toast.dart';
 
-/// Monthly / yearly collection report for admins: totals, payment
+/// Daily / monthly / yearly collection report for admins: totals, payment
 /// methods, vehicle types, collectors, and a per-day (month) or
 /// per-month (year) breakdown — derived from transactions like the Daily
 /// Blotter's summary, so the numbers always match Transaction Logs.
@@ -25,24 +25,43 @@ class ReportsScreen extends StatefulWidget {
 }
 
 class _ReportsScreenState extends State<ReportsScreen> {
-  bool _yearly = false;
-  DateTime _anchor = DateTime(DateTime.now().year, DateTime.now().month);
+  /// Opens on today's report (per day).
+  _Period _period = _Period.daily;
+  DateTime _anchor = DateTime(
+      DateTime.now().year, DateTime.now().month, DateTime.now().day);
   Future<List<ParkingTransaction>>? _load;
 
-  DateTime get _start =>
-      _yearly ? DateTime(_anchor.year) : DateTime(_anchor.year, _anchor.month);
-  DateTime get _end => _yearly
-      ? DateTime(_anchor.year + 1)
-      : DateTime(_anchor.year, _anchor.month + 1);
+  bool get _yearly => _period == _Period.yearly;
+  bool get _daily => _period == _Period.daily;
 
-  String get _periodLabel =>
-      _yearly ? '${_anchor.year}' : DateFormat('MMMM yyyy').format(_anchor);
+  DateTime get _start => switch (_period) {
+        _Period.daily => DateTime(_anchor.year, _anchor.month, _anchor.day),
+        _Period.monthly => DateTime(_anchor.year, _anchor.month),
+        _Period.yearly => DateTime(_anchor.year),
+      };
+  DateTime get _end => switch (_period) {
+        _Period.daily =>
+          DateTime(_anchor.year, _anchor.month, _anchor.day + 1),
+        _Period.monthly => DateTime(_anchor.year, _anchor.month + 1),
+        _Period.yearly => DateTime(_anchor.year + 1),
+      };
+
+  String get _periodLabel => switch (_period) {
+        _Period.daily => DateFormat('EEE, MMMM d, yyyy').format(_anchor),
+        _Period.monthly => DateFormat('MMMM yyyy').format(_anchor),
+        _Period.yearly => '${_anchor.year}',
+      };
 
   bool get _isCurrent {
     final now = DateTime.now();
-    return _yearly
-        ? _anchor.year == now.year
-        : _anchor.year == now.year && _anchor.month == now.month;
+    return switch (_period) {
+      _Period.daily => _anchor.year == now.year &&
+          _anchor.month == now.month &&
+          _anchor.day == now.day,
+      _Period.monthly =>
+        _anchor.year == now.year && _anchor.month == now.month,
+      _Period.yearly => _anchor.year == now.year,
+    };
   }
 
   @override
@@ -62,18 +81,25 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   void _step(int delta) {
-    _anchor = _yearly
-        ? DateTime(_anchor.year + delta, _anchor.month)
-        : DateTime(_anchor.year, _anchor.month + delta);
+    _anchor = switch (_period) {
+      _Period.daily =>
+        DateTime(_anchor.year, _anchor.month, _anchor.day + delta),
+      _Period.monthly => DateTime(_anchor.year, _anchor.month + delta),
+      _Period.yearly => DateTime(_anchor.year + delta, _anchor.month),
+    };
     _reload();
   }
 
-  /// Day of month (monthly) or month number (yearly) -> (count, total),
-  /// in order.
+  /// Hour of day (daily), day of month (monthly) or month number
+  /// (yearly) -> (count, total), in order.
   List<(String, int, double)> _breakdown(List<ParkingTransaction> txs) {
     final buckets = <int, (int, double)>{};
     for (final tx in txs) {
-      final k = _yearly ? tx.timestamp.month : tx.timestamp.day;
+      final k = switch (_period) {
+        _Period.daily => tx.timestamp.hour,
+        _Period.monthly => tx.timestamp.day,
+        _Period.yearly => tx.timestamp.month,
+      };
       final (c, s) = buckets[k] ?? (0, 0.0);
       buckets[k] = (c + 1, s + tx.totalPaid);
     }
@@ -81,10 +107,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
     return [
       for (final k in keys)
         (
-          _yearly
-              ? DateFormat('MMMM').format(DateTime(2000, k))
-              : DateFormat('MMM d, EEE')
-                  .format(DateTime(_anchor.year, _anchor.month, k)),
+          switch (_period) {
+            _Period.daily => DateFormat('h a').format(DateTime(2000, 1, 1, k)),
+            _Period.monthly => DateFormat('MMM d, EEE')
+                .format(DateTime(_anchor.year, _anchor.month, k)),
+            _Period.yearly => DateFormat('MMMM').format(DateTime(2000, k)),
+          },
           buckets[k]!.$1,
           buckets[k]!.$2,
         ),
@@ -108,12 +136,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
     try {
       final savedTo = await PdfExportService.exportTable(
         action: action,
-        title: _yearly
-            ? t('Yearly Collection Report', 'Taunang Ulat ng Koleksyon')
-            : t('Monthly Collection Report', 'Buwanang Ulat ng Koleksyon'),
+        title: switch (_period) {
+          _Period.daily =>
+            t('Daily Collection Report', 'Pang-araw-araw na Ulat ng Koleksyon'),
+          _Period.monthly =>
+            t('Monthly Collection Report', 'Buwanang Ulat ng Koleksyon'),
+          _Period.yearly =>
+            t('Yearly Collection Report', 'Taunang Ulat ng Koleksyon'),
+        },
         period: _periodLabel,
         headers: [
-          _yearly ? t('Month', 'Buwan') : t('Date', 'Petsa'),
+          _yearly
+              ? t('Month', 'Buwan')
+              : _daily
+                  ? t('Hour', 'Oras')
+                  : t('Date', 'Petsa'),
           t('Vehicles', 'Sasakyan'),
           t('Collected', 'Nakolekta'),
         ],
@@ -200,17 +237,24 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
                   children: [
                     Center(
-                      child: SegmentedButton<bool>(
+                      child: SegmentedButton<_Period>(
                         segments: [
                           ButtonSegment(
-                              value: false,
+                              value: _Period.daily,
+                              label: Text(t('Daily', 'Araw-araw'))),
+                          ButtonSegment(
+                              value: _Period.monthly,
                               label: Text(t('Monthly', 'Buwanan'))),
                           ButtonSegment(
-                              value: true, label: Text(t('Yearly', 'Taunan'))),
+                              value: _Period.yearly,
+                              label: Text(t('Yearly', 'Taunan'))),
                         ],
-                        selected: {_yearly},
+                        selected: {_period},
                         onSelectionChanged: (v) {
-                          _yearly = v.first;
+                          _period = v.first;
+                          // Jump back to the current day / month / year.
+                          final now = DateTime.now();
+                          _anchor = DateTime(now.year, now.month, now.day);
                           _reload();
                         },
                       ),
@@ -298,8 +342,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       fontSize: 32)),
               const SizedBox(height: 4),
               Text(
-                  t('${s.count} Vehicles · Average ${_php(s.total / days.length)} per ${_yearly ? 'Month' : 'Day'}',
-                      '${s.count} Sasakyan · Karaniwan ${_php(s.total / days.length)} bawat ${_yearly ? 'buwan' : 'araw'}'),
+                  _daily
+                      ? t('${s.count} Vehicles · Average ${_php(s.count == 0 ? 0 : s.total / s.count)} per Vehicle',
+                          '${s.count} Sasakyan · Karaniwan ${_php(s.count == 0 ? 0 : s.total / s.count)} bawat sasakyan')
+                      : t('${s.count} Vehicles · Average ${_php(s.total / days.length)} per ${_yearly ? 'Month' : 'Day'}',
+                          '${s.count} Sasakyan · Karaniwan ${_php(s.total / days.length)} bawat ${_yearly ? 'buwan' : 'araw'}'),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: YosColors.sub, fontSize: 13)),
             ],
@@ -339,8 +386,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ],
       ),
       _Section(
-        title:
-            _yearly ? t('By Month', 'Bawat Buwan') : t('By Day', 'Bawat Araw'),
+        title: switch (_period) {
+          _Period.daily => t('By Hour', 'Bawat Oras'),
+          _Period.monthly => t('By Day', 'Bawat Araw'),
+          _Period.yearly => t('By Month', 'Bawat Buwan'),
+        },
         rows: [
           for (final (label, c, total) in days) ('$label · $c', _php(total)),
         ],
@@ -396,3 +446,6 @@ class _Section extends StatelessWidget {
     );
   }
 }
+
+/// Which span Collection Reports covers.
+enum _Period { daily, monthly, yearly }

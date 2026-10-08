@@ -4,7 +4,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../core/roles.dart';
 import '../core/theme.dart';
 import '../models/collector.dart';
 import '../services/face_auth_service.dart';
@@ -63,12 +62,17 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
 
   bool _isSuper(Collector c) => c.uid == _superAdminUid;
 
-  AppRole _role(Collector c) =>
-      AppRole.of(isSuperAdmin: _isSuper(c), isAdmin: c.isAdmin);
+  String _roleLabel(Collector c) => _isSuper(c)
+      ? t('Super Admin', 'Super Admin')
+      : c.isAdmin
+          ? t('Admin', 'Tagapangasiwa')
+          : t('Collector', 'Kolektor');
 
-  String _roleLabel(Collector c) => _role(c).label;
-
-  IconData _roleIcon(Collector c) => _role(c).icon;
+  IconData _roleIcon(Collector c) => _isSuper(c)
+      ? Icons.workspace_premium_rounded
+      : c.isAdmin
+          ? Icons.shield_rounded
+          : Icons.person_rounded;
 
   /// Whether this viewer may act on [c] at all — mirrors firestore.rules:
   /// the Super Admin manages everyone; an Admin manages only Collectors.
@@ -198,10 +202,19 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                         width: 52,
                         height: 52,
                         decoration: BoxDecoration(
-                            color: _role(c).color,
+                            color: c.isAdmin
+                                ? YosColors.accentDeep
+                                : YosColors.mint,
                             borderRadius: BorderRadius.circular(16)),
-                        child: Icon(_roleIcon(c),
-                            color: _role(c).onColor, size: 26),
+                        child: Icon(
+                            _roleIcon(c),
+                            // YosColors.onAccent, not a fixed color, on the
+                            // admin badge, so this stays correct even if a
+                            // future palette's accentDeep isn't bright in
+                            // both modes — see onAccent's own comment.
+                            color:
+                                c.isAdmin ? YosColors.onAccent : YosColors.ink,
+                            size: 26),
                       ),
                       const SizedBox(width: 14),
                       Expanded(
@@ -401,11 +414,16 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                     width: 44,
                                     height: 44,
                                     decoration: BoxDecoration(
-                                        color: _role(c).color,
+                                        color: c.isAdmin
+                                            ? YosColors.accentDeep
+                                            : YosColors.mint,
                                         borderRadius:
                                             BorderRadius.circular(14)),
-                                    child: Icon(_roleIcon(c),
-                                        color: _role(c).onColor),
+                                    child: Icon(
+                                        _roleIcon(c),
+                                        color: c.isAdmin
+                                            ? YosColors.onAccent
+                                            : YosColors.ink),
                                   ),
                                   const SizedBox(width: 12),
                                   Expanded(

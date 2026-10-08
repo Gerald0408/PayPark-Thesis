@@ -19,32 +19,15 @@ class LocaleController extends ChangeNotifier {
   AppLocale _locale = AppLocale.english;
   AppLocale get locale => _locale;
 
-  /// Whether a language was ever picked on this phone (or set by
-  /// [preferForCollector]) — a collector's Filipino default only applies
-  /// when it wasn't.
-  bool _chosen = false;
-
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString(_prefsKey);
-    _chosen = saved != null;
-    _locale = saved == 'fil' ? AppLocale.filipino : AppLocale.english;
-  }
-
-  /// Collectors default to Filipino — only on a phone where no language
-  /// was chosen yet, so anyone who picked English keeps it.
-  Future<void> preferForCollector() async {
-    if (_chosen) return;
-    await setLocale(AppLocale.filipino);
+    _locale = prefs.getString(_prefsKey) == 'fil'
+        ? AppLocale.filipino
+        : AppLocale.english;
   }
 
   Future<void> setLocale(AppLocale value) async {
-    _chosen = true;
-    if (_locale == value) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsKey, value == AppLocale.filipino ? 'fil' : 'en');
-      return;
-    }
+    if (_locale == value) return;
     _locale = value;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();

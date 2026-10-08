@@ -28,18 +28,6 @@ class YosColors {
   static const bool _dark = false;
   static bool get isDark => _dark;
 
-  // ---- Signed-in role ----
-  // Every role uses the same colors (the original blue); the role is kept
-  // so collectors get larger text (see SunModeSwitcher). Set by the
-  // dashboard once the role is known, reset to admin on sign-out.
-  static final ValueNotifier<ThemeRole> role =
-      ValueNotifier<ThemeRole>(ThemeRole.admin);
-
-  static void setRole(ThemeRole r) {
-    if (role.value != r) role.value = r;
-  }
-
-
   // ---- Canvas & ink (brightness-aware) ----
   // Every neutral below is now a blue-tinted equivalent of what it
   // replaced — light mode's used to be warm-cream-neutral, dark mode's
@@ -53,9 +41,7 @@ class YosColors {
   // doesn't name a neutral-gray or a dark-canvas stop.
   static const Color bgLight = Color(0xFFD0E3FF); // palette's pale blue
   static const Color bgDark = Color(0xFF10141F); // derived dark navy-black
-  static Color get bg => _dark
-      ? bgDark
-      : bgLight;
+  static Color get bg => _dark ? bgDark : bgLight;
 
   static const Color bgDeepLight = Color(0xFFFFFFFF); // bottom nav bar
   static const Color bgDeepDark = Color(0xFF171D30);
@@ -115,17 +101,9 @@ class YosColors {
   static const Color accentDark = Color(0xFFD0E3FF); // pale bright blue
   static const Color accentSoftDark = Color(0xFFF9FCFF); // palest wash
 
-  // Gold accent on navy (Super Admin), royal blue (Admin), teal (Collector).
-  // Both accents keep white text readable (contrast 4.5:1 or better).
-  static Color get accent => _dark
-      ? accentDark
-      : accentLight;
-  static Color get accentDeep => _dark
-      ? accentDeepDark
-      : accentDeepLight;
-  static Color get accentSoft => _dark
-      ? accentSoftDark
-      : accentSoftLight;
+  static Color get accent => _dark ? accentDark : accentLight;
+  static Color get accentDeep => _dark ? accentDeepDark : accentDeepLight;
+  static Color get accentSoft => _dark ? accentSoftDark : accentSoftLight;
 
   /// 20%-alpha version of the current mode's [accent] — derived so it
   /// always tracks whichever accent is live.
@@ -159,15 +137,11 @@ class YosColors {
   // has always used.
   static const Color mintLight = Color(0xFFF9FCFF); // palest palette stop
   static const Color mintDark = Color(0xFF16224A); // muted dark navy
-  static Color get mint => _dark
-      ? mintDark
-      : mintLight;
+  static Color get mint => _dark ? mintDark : mintLight;
 
   static const Color mossLight = Color(0xFFD0E3FF); // deepest, most saturated
   static const Color mossDark = Color(0xFF081F5C); // deep navy (palette stop)
-  static Color get moss => _dark
-      ? mossDark
-      : mossLight;
+  static Color get moss => _dark ? mossDark : mossLight;
 
   // Legacy aliases from the earlier six-shade (then three-shade) palette
   // — collapsed onto the two above so every existing call site keeps
@@ -612,6 +586,3 @@ RadialGradient get kAmbientGlow => RadialGradient(
         const Color(0x00F2F9F7),
       ],
     );
-
-/// Which role's palette [YosColors] uses — see [YosColors.role].
-enum ThemeRole { superAdmin, admin, collector }

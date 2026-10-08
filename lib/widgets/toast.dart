@@ -4,8 +4,6 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
-import '../services/error_log_service.dart';
-import '../services/locale_controller.dart';
 
 /// Toast severity — controls color, icon, and haptic weight.
 enum ToastKind { info, success, warn, error }
@@ -59,16 +57,6 @@ class Toast {
       show(c, m, kind: ToastKind.warn);
   static void error(BuildContext c, String m) =>
       show(c, m, kind: ToastKind.error);
-
-  /// A failure in plain words — [message] plus "Please try again." — with
-  /// the technical [error] sent to Error Logs instead of shown to the
-  /// user (raw exception text only confuses people at the curb).
-  static void failure(BuildContext c, String message, Object error,
-      {String? where}) {
-    ErrorLogService.instance.record(error, StackTrace.current, where: where);
-    show(c, '$message ${t('Please try again.', 'Pakisubukan ulit.')}',
-        kind: ToastKind.error);
-  }
 
   static IconData _defaultIcon(ToastKind k) => switch (k) {
         ToastKind.info => Icons.info_outline_rounded,
