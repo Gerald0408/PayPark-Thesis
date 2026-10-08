@@ -20,6 +20,9 @@ class _SunModeSwitcherState extends State<SunModeSwitcher> {
     super.initState();
     LightController.instance.addListener(_onLight);
     LightController.instance.start();
+    // Collectors' larger text: only this wrapper rebuilds on a role
+    // change (the screens below are kept, not remounted).
+    YosColors.role.addListener(_onLight);
   }
 
   void _onLight() => setState(() {});
@@ -27,6 +30,7 @@ class _SunModeSwitcherState extends State<SunModeSwitcher> {
   @override
   void dispose() {
     LightController.instance.removeListener(_onLight);
+    YosColors.role.removeListener(_onLight);
     super.dispose();
   }
 

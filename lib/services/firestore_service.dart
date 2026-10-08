@@ -954,10 +954,18 @@ class YosRepository extends ChangeNotifier {
   /// range filter on one field, so no composite index.
   Future<List<ParkingTransaction>> transactionsBetween(
       DateTime start, DateTime end) async {
-    final snap = await _tx
+    final q = _tx
         .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('timestamp', isLessThan: Timestamp.fromDate(end))
-        .get();
+        .where('timestamp', isLessThan: Timestamp.fromDate(end));
+    QuerySnapshot snap;
+    try {
+      // On a weak "connected but no internet" signal a server read can
+      // hang for minutes — that was the never-ending spinner/refresh.
+      snap = await q.get().timeout(const Duration(seconds: 12));
+    } catch (_) {
+      // Slow or offline: show what this phone already has instead.
+      snap = await q.get(const GetOptions(source: Source.cache));
+    }
     return snap.docs.map(ParkingTransaction.fromDoc).toList();
   }
 

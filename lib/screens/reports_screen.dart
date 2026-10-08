@@ -190,7 +190,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
               child: RefreshIndicator(
                 onRefresh: () async {
                   _reload();
-                  await _load;
+                  // The error itself shows in the list below; the pull
+                  // spinner just has to stop.
+                  try {
+                    await _load;
+                  } catch (_) {}
                 },
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
