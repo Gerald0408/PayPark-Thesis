@@ -10,6 +10,7 @@ import '../services/locale_controller.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/toast.dart';
 import '../widgets/glow_effects.dart';
+import '../widgets/vehicle_type_tile.dart';
 
 class FeesScreen extends StatefulWidget {
   const FeesScreen({super.key});
@@ -252,15 +253,8 @@ class _FeesScreenState extends State<FeesScreen> {
                               _showFeeDetails(VehicleType.values[i], isAdmin),
                           child: Row(
                             children: [
-                              Container(
-                                width: 56,
-                                height: 56,
-                                decoration: BoxDecoration(
-                                    color: YosColors.mint,
-                                    borderRadius: BorderRadius.circular(18)),
-                                child: Icon(VehicleType.values[i].icon,
-                                    color: YosColors.ink, size: 28),
-                              ),
+                              VehicleTypeBadge(
+                                  type: VehicleType.values[i], size: 56),
                               const SizedBox(width: 16),
                               Expanded(
                                 child: Row(
@@ -363,14 +357,7 @@ class _FeeDetailsDialog extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(20, 16, 8, 4),
             child: Row(
               children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                      color: YosColors.mint,
-                      borderRadius: BorderRadius.circular(14)),
-                  child: Icon(type.icon, color: YosColors.ink, size: 22),
-                ),
+                VehicleTypeBadge(type: type, size: 40),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(type.label,
@@ -608,7 +595,15 @@ class _TimeChargesCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fees = FeeSettingsService.instance;
-    Widget row(String label, String value, VoidCallback onTap) => InkWell(
+    const valueStyle = TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w800,
+        fontFeatures: [FontFeature.tabularFigures()]);
+    // [unit] ("Hours") prints small after the number, so "3 Hours" reads
+    // the same size as "₱10".
+    Widget row(String label, String value, VoidCallback onTap,
+            {String? unit}) =>
+        InkWell(
           onTap: isAdmin ? onTap : null,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
@@ -622,11 +617,21 @@ class _TimeChargesCard extends StatelessWidget {
                           fontSize: 15,
                           fontWeight: FontWeight.w600)),
                 ),
-                Text(value,
-                    style: TextStyle(
-                        color: YosColors.ink,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800)),
+                // Right-aligned so every value ends at the same spot on
+                // the right edge.
+                Text.rich(
+                  TextSpan(children: [
+                    TextSpan(text: value, style: valueStyle),
+                    if (unit != null)
+                      TextSpan(
+                          text: ' $unit',
+                          style: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w700)),
+                  ]),
+                  maxLines: 1,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(color: YosColors.ink),
+                ),
                 if (isAdmin) ...[
                   const SizedBox(width: 6),
                   Icon(Icons.edit_rounded, color: YosColors.sub, size: 18),
@@ -661,7 +666,8 @@ class _TimeChargesCard extends StatelessWidget {
               style: TextStyle(color: YosColors.sub, fontSize: 13)),
           const Divider(height: 20),
           row(t('Hours Covered By Base Fee', 'Oras na sakop ng base fee'),
-              '${fees.baseHours} Hours', onEditBaseHours),
+              '${fees.baseHours}', onEditBaseHours,
+              unit: t('Hours', 'Oras')),
           for (final type in VehicleType.values)
             row(
                 t('Extra Hours · ${type.label}', 'Dagdag na oras · ${type.label}'),

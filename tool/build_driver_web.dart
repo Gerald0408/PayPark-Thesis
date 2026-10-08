@@ -1,0 +1,69 @@
+// Builds the driver portal for Firebase Hosting with offline support:
+//
+//   dart run tool/build_driver_web.dart
+//   firebase deploy --only hosting
+//
+// Same as `flutter build web -t lib/main_driver.dart --output
+// build/driver_web`, plus:
+//  - --no-web-resources-cdn, so the Flutter engine (CanvasKit) is served
+//    from our own site instead of Google's CDN and can be cached offline;
+//  - fills in build/driver_web/offline_sw.js with the list of files to
+//    pre-cache and a fresh version, so phones pick up the new build.
+import 'dart:io';
+
+const _out = 'build/driver_web';
+
+Future<void> main() async {
+  final build = await Process.start(
+    'flutter',
+    [
+      'build', 'web',
+      '-t', 'lib/main_driver.dart',
+      '--output', _out,
+      '--no-web-resources-cdn',
+    ],
+    runInShell: true,
+    mode: ProcessStartMode.inheritStdio,
+  );
+  final code = await build.exitCode;
+  if (code != 0) exit(code);
+
+  final root = Directory(_out);
+  final files = <String>[];
+  for (final e in root.listSync(recursive: true)) {
+    if (e is! File) continue;
+    final path = e.path
+        .substring(root.path.length + 1)
+        .replaceAll(Platform.pathSeparator, '/');
+    if (_skip(path)) continue;
+    files.add(path);
+  }
+  files.sort();
+
+  final sw = File('$_out/offline_sw.js');
+  final version = DateTime.now().millisecondsSinceEpoch.toString();
+  final list = files.map((f) => "  '$f',").join('\n');
+  sw.writeAsStringSync(sw
+      .readAsStringSync()
+      .replaceFirst("'__VERSION__'", "'$version'")
+      .replaceFirst('/*__PRECACHE__*/[]', '[\n$list\n]'));
+
+  stdout.writeln('\nOffline: ${files.length} files pre-cached '
+      '(version $version). Deploy with: firebase deploy --only hosting');
+}
+
+/// Files a phone never needs offline: debug symbols, the service workers
+/// themselves, engine variants this canvaskit/dart2js build doesn't load
+/// (skwasm*, wimp, the WebParagraph CanvasKit), and the collector app's
+/// big assets that the portal never shows (face model, intro video).
+bool _skip(String path) =>
+    path.endsWith('.symbols') ||
+    path.endsWith('.tflite') ||
+    path.endsWith('.mp4') ||
+    path == '.last_build_id' ||
+    path == 'assets/NOTICES' ||
+    path == 'offline_sw.js' ||
+    path == 'flutter_service_worker.js' ||
+    path.startsWith('canvaskit/skwasm') ||
+    path.startsWith('canvaskit/wimp') ||
+    path.startsWith('canvaskit/webparagraph/');

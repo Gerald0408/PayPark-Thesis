@@ -33,6 +33,16 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <script>
+    // Lets the app open without internet after the first visit — see
+    // offline_sw.js.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('offline_sw.js').catch((e) =>
+          console.warn('Offline support unavailable:', e));
+      });
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

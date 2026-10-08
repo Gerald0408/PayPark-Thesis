@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../core/constants.dart';
+
 /// A vehicle whose details are remembered so entry can be one-tap
 /// (or one-scan) later. Plate number is the identity key.
 class RegisteredVehicle {
@@ -104,7 +106,7 @@ class RegisteredVehicle {
       docId: doc.id,
       plateNumber: d['plate_number'] ?? '',
       driverName: d['driver_name'] ?? '',
-      vehicleType: d['vehicle_type'] ?? 'Sedan',
+      vehicleType: VehicleType.currentLabel(d['vehicle_type'] ?? 'Sedan'),
       defaultZoneId: d['default_zone_id'] ?? '',
       registeredAt:
           (d['registered_at'] as Timestamp?)?.toDate() ?? DateTime.now(),

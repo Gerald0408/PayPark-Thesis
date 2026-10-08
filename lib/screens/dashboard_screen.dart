@@ -6,8 +6,6 @@ import 'package:intl/intl.dart';
 
 import '../core/theme.dart';
 import '../core/names.dart';
-import '../dev/dev_flags.dart';
-import '../dev/pricing_test_screen.dart';
 import '../models/access_request.dart';
 import '../models/transaction.dart';
 import '../services/firestore_service.dart';
@@ -679,7 +677,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           onTap: () => _open(const LogsScreen()),
         ),
         _NavTile(
-          icon: Icons.request_quote_rounded,
+          glyph: '₱',
           title: t('Fee Matrix', 'Talaan ng Bayarin'),
           onTap: () => _open(const FeesScreen()),
         ),
@@ -721,13 +719,6 @@ class _DashboardScreenState extends State<DashboardScreen>
             icon: Icons.bar_chart_rounded,
             title: t('Collection Reports', 'Ulat ng Koleksyon'),
             onTap: () => _open(const ReportsScreen()),
-          ),
-        // TEMPORARY — see lib/dev/dev_flags.dart.
-        if (kEnablePricingTestTool)
-          _NavTile(
-            icon: Icons.science_rounded,
-            title: t('Pricing Test', 'Pricing Test'),
-            onTap: () => _open(const PricingTestScreen()),
           ),
         if (_isAdmin)
           _NavTile(
@@ -1108,11 +1099,16 @@ class _AverageCard extends StatelessWidget {
 
 class _NavTile extends StatelessWidget {
   const _NavTile({
-    required this.icon,
+    this.icon,
+    this.glyph,
     required this.title,
     required this.onTap,
-  });
-  final IconData icon;
+  }) : assert(icon != null || glyph != null);
+  final IconData? icon;
+
+  /// A text symbol drawn in place of [icon] — e.g. "₱", which Material
+  /// Icons doesn't have.
+  final String? glyph;
   final String title;
   final VoidCallback onTap;
 
@@ -1153,7 +1149,15 @@ class _NavTile extends StatelessWidget {
             // that also happens to need dark ink — so this fixed value is
             // correct in both cases, just no longer expressible as
             // onAccent since onAccent no longer means "dark" everywhere.
-            child: Icon(icon, color: const Color(0xFF1B1B1B), size: 17),
+            child: glyph != null
+                ? Center(
+                    child: Text(glyph!,
+                        style: const TextStyle(
+                            color: Color(0xFF1B1B1B),
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            height: 1)))
+                : Icon(icon, color: const Color(0xFF1B1B1B), size: 17),
           ),
           const SizedBox(height: 4),
           // Flexible + FittedBox, not a bare Text: at a bumped-up

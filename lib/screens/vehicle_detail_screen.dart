@@ -9,6 +9,7 @@ import '../services/registry_service.dart';
 import '../widgets/doc_photo_view.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
+import '../widgets/vehicle_type_tile.dart';
 import 'registry_screen.dart';
 
 /// Read-only look at a registered vehicle — full name, vehicle type,
@@ -102,14 +103,7 @@ class _VehicleDetailScreenState extends State<VehicleDetailScreen> {
                 child: GlassCard(
                   child: Row(
                     children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                            color: YosColors.mint,
-                            borderRadius: BorderRadius.circular(16)),
-                        child: Icon(vt.icon, color: YosColors.ink, size: 26),
-                      ),
+                      VehicleTypeBadge(type: vt),
                       const SizedBox(width: 14),
                       Expanded(
                         child: Column(

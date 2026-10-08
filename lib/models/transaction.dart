@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../core/constants.dart';
 import '../core/names.dart';
 
 /// A single vehicle entry / collection transaction.
@@ -239,7 +240,7 @@ class ParkingTransaction {
       trackingId: d['tracking_id'] ?? '',
       driverName: d['driver_name'] ?? '',
       plateNumber: d['plate_number'] ?? '',
-      vehicleType: d['vehicle_type'] ?? 'Sedan',
+      vehicleType: VehicleType.currentLabel(d['vehicle_type'] ?? 'Sedan'),
       fee: (d['fee'] as num?)?.toDouble() ?? 0,
       zoneId: d['zone_id'] ?? '',
       timestamp: (d['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),

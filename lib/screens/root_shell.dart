@@ -8,7 +8,6 @@ import '../models/collector.dart';
 import '../services/firestore_service.dart';
 import '../services/locale_controller.dart';
 import '../widgets/app_dialog.dart';
-import '../widgets/shift_summary_dialog.dart';
 import 'dashboard_screen.dart';
 import 'face_enroll_screen.dart';
 import 'intro_screen.dart';
@@ -235,19 +234,52 @@ class _RootTabsState extends State<_RootTabs> {
   }
 
   Future<void> _confirmLogout() async {
-    // A collector ends their shift on their own totals — what they should
-    // be handing over — before confirming.
-    final confirmed = _isAdmin
-        ? await showAppConfirmDialog(
-            context,
-            title: 'Log Out?',
-            message: 'You\'ll need to sign in again to start your next '
-                'collection.',
-            confirmLabel: 'Log Out',
-            confirmIcon: Icons.logout_rounded,
-            confirmColor: YosColors.bad,
-          )
-        : await showShiftSummaryDialog(context, forLogout: true);
+    // A small plain Yes / No.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 40),
+        titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+        contentPadding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        title: Text(t('Log Out?', 'Mag-log Out?'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+        content: Text(t('Do you want to log out?', 'Gusto mo bang mag-log out?'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14)),
+        // Extra-large Yes / No — the decision is the whole point of
+        // this dialog, so the buttons are big, easy targets.
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(60)),
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: Text(t('No', 'Hindi'),
+                      style: const TextStyle(
+                          fontSize: 22, fontWeight: FontWeight.w500)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                      backgroundColor: YosColors.bad,
+                      minimumSize: const Size.fromHeight(60)),
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: Text(t('Yes', 'Oo'),
+                      style: const TextStyle(
+                          fontSize: 22, fontWeight: FontWeight.w500)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
     if (confirmed != true) return;
     await YosRepository.instance.logout();
     if (!mounted) return;

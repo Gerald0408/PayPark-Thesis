@@ -19,6 +19,7 @@ import '../widgets/driver_pin_dialog.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/toast.dart';
 import '../widgets/glow_effects.dart';
+import '../widgets/vehicle_type_tile.dart';
 import '../widgets/zone_chip_grid.dart';
 import 'vehicle_attachment_screen.dart';
 import 'vehicle_detail_screen.dart';
@@ -626,15 +627,8 @@ class _RegCard extends StatelessWidget {
                     Row(
                       children: [
                         ExcludeSemantics(
-                          child: Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                                color: pastelAt(index),
-                                borderRadius: BorderRadius.circular(14)),
-                            child:
-                                Icon(vt.icon, color: YosColors.ink, size: 22),
-                          ),
+                          child: VehicleTypeBadge(
+                              type: vt, size: 44, color: pastelAt(index)),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -1045,7 +1039,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                           crossAxisCount: 2,
                           mainAxisSpacing: 10,
                           crossAxisSpacing: 10,
-                          childAspectRatio: 2.2,
+                          childAspectRatio: 1.4,
                           children: [
                             for (var i = 0; i < VehicleType.values.length; i++)
                               _TypeChip(
@@ -1289,22 +1283,7 @@ class _TypeChip extends StatelessWidget {
             width: selected ? 2 : 1,
           ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              Icon(type.icon, size: 22, color: YosColors.ink),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(type.label,
-                    style: TextStyle(
-                        color: YosColors.ink,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13)),
-              ),
-            ],
-          ),
-        ),
+        child: VehicleTypeTileContent(type: type),
       ),
     );
   }

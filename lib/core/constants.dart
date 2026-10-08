@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
 
-/// Vehicle types and their default rates (local mall/commercial-hub
-/// benchmark): the base fee covers the first [kDefaultBaseHours] hours,
-/// then [extraHourFee] per hour started after that. Admins can change all
-/// of these in Fee Matrix (FeeSettingsService) — these are only the
-/// starting values.
+/// Vehicle types and their default rates: the base fee covers the first
+/// [kDefaultBaseHours] hours, then [extraHourFee] per hour started after
+/// that. Admins can change all of these in Fee Matrix
+/// (FeeSettingsService) — these are only the starting values.
 ///
 /// New enum names (not the old tricycle/sedan/truck) on purpose: fee
 /// overrides in settings/fees are keyed by name, so the old types' saved
 /// overrides can't silently replace these new rates.
 enum VehicleType {
-  motorcycle('Motorcycle / Scooter', Icons.two_wheeler, 20.0, 10.0),
-  car('Sedan / Hatchback / SUV', Icons.directions_car, 40.0, 15.0),
-  van('Delivery Van / Light Truck', Icons.local_shipping, 60.0, 25.0);
+  motorcycle('Motorcycle', Icons.two_wheeler, 50.0, 10.0),
+  closedVan('Closed Van', Icons.airport_shuttle, 100.0, 15.0),
+  car('Forward / Elf', Icons.directions_car, 150.0, 15.0),
+  van('Trailer Truck', Icons.local_shipping, 200.0, 25.0);
 
   const VehicleType(this.label, this.icon, this.fee, this.extraHourFee);
   final String label;
@@ -24,19 +24,47 @@ enum VehicleType {
   /// Default charge per hour started past the base hours.
   final double extraHourFee;
 
+  /// Picture shown under the name on this type's picker tile, or
+  /// null for none.
+  String? get backgroundImage => switch (this) {
+        VehicleType.motorcycle => 'assets/vehicles/motorcycle.png',
+        VehicleType.closedVan => 'assets/vehicles/closed_van.png',
+        VehicleType.car => 'assets/vehicles/forward_elf.png',
+        VehicleType.van => 'assets/vehicles/trailer_truck.png',
+      };
+
+  /// The same three types under the names they had before Oct 2026 —
+  /// only renamed, so records saved with these read as the new names
+  /// (see [currentLabel]).
+  static const _renamedLabels = {
+    'Motorcycle / Scooter': VehicleType.motorcycle,
+    'Sedan / Hatchback / SUV': VehicleType.car,
+    'Delivery Van / Light Truck': VehicleType.van,
+  };
+
   /// Labels saved on transactions/registered vehicles before the current
   /// types existed, mapped to the closest current type.
   static const _legacyLabels = {
     'Closed Van, Jeep, SUV, Tricycle': VehicleType.car,
-    'Forward/Elf': VehicleType.van,
+    'Forward/Elf': VehicleType.car,
     'Trailer Truck/Ten Wheeler Truck': VehicleType.van,
     'Sedan': VehicleType.car,
+    // Briefly one type (Oct 2026) before Closed Van got its own rate —
+    // priced as a motorcycle then, and shown as recorded.
+    'Closed Van / Motorcycle': VehicleType.motorcycle,
   };
 
   static VehicleType fromLabel(String label) =>
       VehicleType.values.where((v) => v.label == label).firstOrNull ??
+      _renamedLabels[label] ??
       _legacyLabels[label] ??
       VehicleType.car;
+
+  /// [saved] as it should be shown: a renamed type's old label becomes
+  /// its current one; anything else (including older legacy labels, which
+  /// were genuinely different categories) is kept as recorded.
+  static String currentLabel(String saved) =>
+      _renamedLabels[saved]?.label ?? saved;
 }
 
 /// Commercial parking zones monitored by the collector.

@@ -1,14 +1,22 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../core/theme.dart';
 import '../models/transaction.dart';
 import '../services/locale_controller.dart';
+import '../services/payment_ref_ocr.dart';
+import 'toast.dart';
 
 /// Cash / GCash / Maya choice for the receipt, plus the reference-number
 /// field a digital payment needs. Large tap targets on purpose — this is
 /// tapped at the curb, often by older collectors. Disabled ([onChanged]
-/// null) once the payment is being saved.
-class PaymentMethodPicker extends StatelessWidget {
+/// null) once the payment is being saved. "Scan" photographs the
+/// driver's payment screen and fills the reference number in from it.
+class PaymentMethodPicker extends StatefulWidget {
   const PaymentMethodPicker({
     super.key,
     required this.method,
@@ -21,6 +29,72 @@ class PaymentMethodPicker extends StatelessWidget {
   final TextEditingController refController;
   final ValueChanged<String>? onChanged;
   final VoidCallback onRefChanged;
+
+  @override
+  State<PaymentMethodPicker> createState() => _PaymentMethodPickerState();
+}
+
+class _PaymentMethodPickerState extends State<PaymentMethodPicker> {
+  bool _scanning = false;
+
+  String get method => widget.method;
+  TextEditingController get refController => widget.refController;
+  ValueChanged<String>? get onChanged => widget.onChanged;
+  VoidCallback get onRefChanged => widget.onRefChanged;
+
+  /// Photographs the driver's GCash / Maya "sent" screen, reads it on the
+  /// device and drops the reference number into the field (which feeds
+  /// the receipt). Still editable — the collector checks it against the
+  /// driver's screen before confirming payment.
+  Future<void> _scan() async {
+    final label = PaymentMethod.label(method);
+    // The manifest declares CAMERA, so Android refuses the camera intent
+    // until the permission is granted.
+    if (!(await Permission.camera.request()).isGranted) {
+      if (mounted) {
+        Toast.warn(
+            context,
+            t('Camera permission is needed to scan.',
+                'Kailangan ang camera para mag-scan.'));
+      }
+      return;
+    }
+    final photo = await ImagePicker()
+        .pickImage(source: ImageSource.camera, imageQuality: 90);
+    if (photo == null || !mounted) return;
+    setState(() => _scanning = true);
+    String? ref;
+    try {
+      final tr = TextRecognizer(script: TextRecognitionScript.latin);
+      try {
+        final read = await tr.processImage(InputImage.fromFilePath(photo.path));
+        ref = PaymentRefOcr.parse(read.text);
+      } finally {
+        await tr.close();
+        File(photo.path).delete().ignore();
+      }
+    } catch (e) {
+      if (mounted) {
+        Toast.error(context,
+            t("Couldn't read the photo: $e", 'Hindi mabasa ang litrato: $e'));
+      }
+    }
+    if (!mounted) return;
+    setState(() => _scanning = false);
+    if (ref == null) {
+      Toast.warn(
+          context,
+          t('No reference number found. Retake the photo closer, or type it.',
+              'Walang nakitang reference number. Kumuha ulit nang mas malapit, o i-type ito.'));
+      return;
+    }
+    refController.text = ref;
+    onRefChanged();
+    Toast.success(
+        context,
+        t('$label reference: $ref — check it matches.',
+            'Reference ng $label: $ref — tiyaking tugma.'));
+  }
 
   static IconData _icon(String m) => switch (m) {
         PaymentMethod.cash => Icons.payments_rounded,
@@ -48,9 +122,7 @@ class PaymentMethodPicker extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: Material(
-                    color: m == method
-                        ? YosColors.accent
-                        : YosColors.surface,
+                    color: m == method ? YosColors.accent : YosColors.surface,
                     borderRadius: BorderRadius.circular(14),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(14),
@@ -93,23 +165,50 @@ class PaymentMethodPicker extends StatelessWidget {
         ),
         if (digital) ...[
           const SizedBox(height: 12),
-          TextField(
-            controller: refController,
-            enabled: enabled,
-            keyboardType: TextInputType.number,
-            onChanged: (_) => onRefChanged(),
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            decoration: InputDecoration(
-              labelText: t('${PaymentMethod.label(method)} reference no.',
-                  'Reference no. ng ${PaymentMethod.label(method)}'),
-              helperText: t("Copy it from the driver's payment screen",
-                  'Kopyahin mula sa payment screen ng driver'),
-              prefixIcon: const Icon(Icons.tag_rounded),
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: refController,
+                  enabled: enabled && !_scanning,
+                  // Maya references have letters, so not a number pad.
+                  keyboardType: TextInputType.visiblePassword,
+                  textCapitalization: TextCapitalization.characters,
+                  onChanged: (_) => onRefChanged(),
+                  style: const TextStyle(
+                      fontSize: 17, fontWeight: FontWeight.w700),
+                  decoration: InputDecoration(
+                    labelText: t('${PaymentMethod.label(method)} reference no.',
+                        'Reference no. ng ${PaymentMethod.label(method)}'),
+                    helperText: t(
+                        "Tap Scan to read it from the driver's payment screen",
+                        'I-tap ang Scan para basahin mula sa payment screen ng driver'),
+                    helperMaxLines: 2,
+                    prefixIcon: const Icon(Icons.tag_rounded),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 58,
+                child: FilledButton.icon(
+                  onPressed: (enabled && !_scanning) ? _scan : null,
+                  icon: _scanning
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.photo_camera_rounded),
+                  label: Text(t('Scan', 'Scan'),
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w800)),
+                ),
+              ),
+            ],
           ),
         ],
       ],
     );
   }
 }
-

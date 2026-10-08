@@ -53,6 +53,8 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             title: Text(t('My PayPark', 'Aking PayPark'),
                 style: const TextStyle(fontWeight: FontWeight.w800)),
             actions: [
+              // Language switch top right, beside the title.
+              const LanguageToggle(compact: true),
               PopupMenuButton<String>(
                 tooltip: t('Menu', 'Menu'),
                 icon: const Icon(Icons.more_vert_rounded, size: 28),
@@ -101,10 +103,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
-                        const Align(
-                            alignment: Alignment.centerLeft,
-                            child: LanguageToggle()),
                         const SizedBox(height: 16),
                         if (vSnap.hasError)
                           _Notice(t("Couldn't load your vehicles.",

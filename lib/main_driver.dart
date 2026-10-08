@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -11,13 +12,23 @@ import 'services/locale_controller.dart';
 /// Entry point of the driver portal — a separate, web-hosted app from the
 /// collector app (lib/main.dart). Built with:
 ///
-///   flutter build web -t lib/main_driver.dart --output build/driver_web
+///   dart run tool/build_driver_web.dart
+///
+/// (flutter build web -t lib/main_driver.dart --output build/driver_web,
+/// plus offline support — see that script)
 ///
 /// and served by Firebase Hosting (see firebase.json). Imports only
 /// web-safe code: no camera, ML, Bluetooth or RFID-reader plugins.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // Keeps a copy of the driver's points and history in the browser, so
+  // the portal still shows them offline (the app files themselves are
+  // cached by web/offline_sw.js). Must be set before the first read.
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: true,
+    cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+  );
   try {
     await LocaleController.instance.init();
   } catch (_) {}

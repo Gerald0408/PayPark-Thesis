@@ -23,8 +23,9 @@ Duration? overstayOf(ParkingTransaction tx, DateTime now) {
 }
 
 /// Dashboard bell's destination: every parked vehicle that has stayed past
-/// its hours, longest overstay first, plus (admins only) pending access
-/// requests. Tapping a vehicle opens its TIME OUT sheet.
+/// the hours the base fee covers, longest overstay first, plus (admins
+/// only) pending access requests. Tapping a vehicle opens its TIME OUT
+/// sheet.
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key, required this.isAdmin});
 
@@ -124,8 +125,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               fontSize: 17)),
                       const SizedBox(height: 4),
                       Text(
-                          t('Parked longer than the hours chosen at Time In.',
-                              'Nakaparada nang lampas sa napiling oras.'),
+                          t('Parked past the first ${FeeSettingsService.instance.baseHours} hours — extra hours are now being charged.',
+                              'Lampas na sa unang ${FeeSettingsService.instance.baseHours} oras — may singil na ang dagdag na oras.'),
                           style: TextStyle(color: YosColors.sub, fontSize: 13)),
                       const SizedBox(height: 12),
                       if (over.isEmpty)

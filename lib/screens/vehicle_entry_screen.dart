@@ -14,6 +14,7 @@ import '../widgets/visit_flow.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/toast.dart';
 import '../widgets/glow_effects.dart';
+import '../widgets/vehicle_type_tile.dart';
 import '../widgets/zone_chip_grid.dart';
 import 'rfid_scan_screen.dart';
 
@@ -257,7 +258,7 @@ class _VehicleEntryScreenState extends State<VehicleEntryScreen> {
                                 maxCrossAxisExtent: 190,
                                 mainAxisSpacing: 10,
                                 crossAxisSpacing: 10,
-                                childAspectRatio: 2.2,
+                                childAspectRatio: 1.4,
                               ),
                               itemCount: VehicleType.values.length,
                               itemBuilder: (context, i) => _TypeChip(
@@ -366,36 +367,10 @@ class _TypeChip extends StatelessWidget {
             width: selected ? 2 : 1,
           ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              Icon(type.icon, size: 22, color: YosColors.ink),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(type.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: YosColors.ink,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13)),
-                    Text(
-                        '₱${FeeSettingsService.instance.feeFor(type).toStringAsFixed(0)}',
-                        maxLines: 1,
-                        style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: YosColors.sub)),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        child: VehicleTypeTileContent(
+          type: type,
+          price:
+              '₱${FeeSettingsService.instance.feeFor(type).toStringAsFixed(0)}',
         ),
       ),
     );

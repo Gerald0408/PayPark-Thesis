@@ -295,26 +295,33 @@ class _RfidPointsScreenState extends State<RfidPointsScreen> {
                                     // (see the card's own onTap);
                                     // editing a vehicle now happens
                                     // from Registered Vehicles instead.
-                                    // Flexible, not a fixed-width
-                                    // trailing column: with nothing
-                                    // else claiming space on this side
-                                    // of the row, the points figure
-                                    // gets the room that icon used to
-                                    // take instead of leaving it blank.
-                                    Flexible(
+                                    // Same fixed-width column on the
+                                    // right of every card, with the
+                                    // figures left-aligned inside it,
+                                    // so each balance starts at the
+                                    // same spot down the list. FittedBox
+                                    // shrinks a huge balance instead of
+                                    // overflowing.
+                                    SizedBox(
+                                      width: 96,
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
                                         crossAxisAlignment:
-                                            CrossAxisAlignment.end,
+                                            CrossAxisAlignment.start,
                                         children: [
                                           FittedBox(
                                             fit: BoxFit.scaleDown,
+                                            alignment: Alignment.centerLeft,
                                             child: Text(
                                                 formatPoints(list[i].points),
                                                 maxLines: 1,
                                                 style: TextStyle(
                                                     fontWeight: FontWeight.w900,
                                                     fontSize: 24,
+                                                    fontFeatures: const [
+                                                      FontFeature
+                                                          .tabularFigures()
+                                                    ],
                                                     color:
                                                         YosColors.accentDeep)),
                                           ),

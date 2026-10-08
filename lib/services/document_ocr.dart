@@ -165,16 +165,20 @@ class DocumentOcr {
   /// VAN") are listed before the plainer ones they'd otherwise collide
   /// with (e.g. "VAN"), since the first matching entry wins.
   static const _typeKeywords = <String, List<String>>{
-    'Closed Van, Jeep, SUV, Tricycle': [
+    'Motorcycle': [
+      'MOTORCYCLE',
+      'SCOOTER',
       'TRICYCLE',
       'TRIKE',
-      'JEEP',
-      'SUV',
-      'CLOSED VAN',
       'L4',
       'L5',
     ],
-    'Forward/Elf': [
+    'Closed Van': [
+      'CLOSED VAN',
+      'JEEP',
+      'SUV',
+    ],
+    'Forward / Elf': [
       'VAN',
       'AUV',
       'FORWARD',
@@ -186,7 +190,7 @@ class DocumentOcr {
       'M2',
       'N1',
     ],
-    'Trailer Truck/Ten Wheeler Truck': [
+    'Trailer Truck': [
       '10 WHEELER',
       'TEN WHEELER',
       'TRAILER',

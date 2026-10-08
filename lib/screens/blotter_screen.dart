@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -15,7 +14,6 @@ import '../services/printer_service.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/glow_effects.dart';
 import '../widgets/pdf_export_search_dialog.dart';
-import '../widgets/shift_summary_dialog.dart';
 import '../widgets/toast.dart';
 
 /// Daily blotter: one page per day, like the barangay's paper logbook —
@@ -82,19 +80,6 @@ class _BlotterScreenState extends State<BlotterScreen> {
       lastDate: DateTime.now(),
     );
     if (picked != null) _setDay(picked);
-  }
-
-  Future<void> _addEntry() async {
-    final added = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const _AddEntrySheet(),
-    );
-    if (added == true && mounted) {
-      if (!_isToday) _setDay(DateTime.now());
-      Toast.success(context, t('Blotter entry saved', 'Naitala sa blotter'));
-    }
   }
 
   String _categoryLabel(String c) => switch (c) {
@@ -245,18 +230,10 @@ class _BlotterScreenState extends State<BlotterScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addEntry,
-        backgroundColor: YosColors.accent,
-        foregroundColor: YosColors.onAccent,
-        icon: const Icon(Icons.edit_note_rounded, size: 28),
-        label: Text(t('Add Entry', 'Magtala'),
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-      ),
       body: TouchGlowOverlay(
         child: SafeArea(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 110),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
             children: [
               _DayBar(
                 day: _day,
@@ -282,20 +259,8 @@ class _BlotterScreenState extends State<BlotterScreen> {
                         child: Center(child: CircularProgressIndicator()));
                   }
                   _latestTxs = snap.data!;
-                  final uid = FirebaseAuth.instance.currentUser?.uid;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Collectors see their own shift first — what they
-                      // hand over — then the whole day.
-                      if (!widget.isAdmin && uid != null) ...[
-                        ShiftSummaryCard(
-                            summary: ShiftSummary(snap.data!, uid)),
-                        const SizedBox(height: 14),
-                      ],
-                      _SummaryCard(summary: DailyCollectionSummary(snap.data!)),
-                    ],
-                  );
+                  return _SummaryCard(
+                      summary: DailyCollectionSummary(snap.data!));
                 },
               ),
               const SizedBox(height: 20),
@@ -321,11 +286,8 @@ class _BlotterScreenState extends State<BlotterScreen> {
                   _latestEntries = snap.data!;
                   if (snap.data!.isEmpty) {
                     return _InfoText(t(
-                        'Nothing recorded for this day. Tap "Add Entry" to '
-                            'write an incident, complaint, violation or note.',
-                        'Walang naitala sa araw na ito. Pindutin ang '
-                            '"Magtala" para magsulat ng insidente, reklamo, '
-                            'paglabag o tala.'));
+                        'Nothing recorded for this day.',
+                        'Walang naitala sa araw na ito.'));
                   }
                   return Column(
                     children: [
@@ -556,151 +518,4 @@ class _InfoText extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(color: YosColors.sub, fontSize: 15)),
       );
-}
-
-/// New blotter entry form — category, what happened, optional plate and
-/// zone. Saved append-only; there is no edit, matching a paper blotter.
-class _AddEntrySheet extends StatefulWidget {
-  const _AddEntrySheet();
-
-  @override
-  State<_AddEntrySheet> createState() => _AddEntrySheetState();
-}
-
-class _AddEntrySheetState extends State<_AddEntrySheet> {
-  String _category = BlotterCategory.incident;
-  String? _zoneId;
-  final _description = TextEditingController();
-  final _plate = TextEditingController();
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _description.dispose();
-    _plate.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    if (_description.text.trim().length < 5) {
-      Toast.warn(context,
-          t('Describe what happened first.', 'Ilarawan muna ang nangyari.'));
-      return;
-    }
-    setState(() => _saving = true);
-    // Not awaited past the local write — Firestore queues it offline.
-    BlotterService.instance
-        .add(
-          category: _category,
-          description: _description.text,
-          plateNumber: _plate.text,
-          zoneId: _zoneId,
-        )
-        .catchError((Object e, StackTrace st) =>
-            ErrorLogService.instance.record(e, st, where: 'add blotter entry'));
-    if (mounted) Navigator.of(context).pop(true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final labels = {
-      BlotterCategory.incident: (t('Incident', 'Insidente'), Icons.report_rounded),
-      BlotterCategory.complaint: (t('Complaint', 'Reklamo'), Icons.record_voice_over_rounded),
-      BlotterCategory.violation: (t('Violation', 'Paglabag'), Icons.gavel_rounded),
-      BlotterCategory.note: (t('Note', 'Tala'), Icons.sticky_note_2_rounded),
-    };
-    return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Container(
-        decoration: BoxDecoration(
-          color: YosColors.bg,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(t('New Blotter Entry', 'Bagong tala sa blotter'),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: YosColors.ink,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 20)),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  for (final c in BlotterCategory.all)
-                    ChoiceChip(
-                      avatar: Icon(labels[c]!.$2, size: 20),
-                      label: Text(labels[c]!.$1,
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w700)),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 10),
-                      selected: _category == c,
-                      onSelected: (_) => setState(() => _category = c),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _description,
-                minLines: 3,
-                maxLines: 6,
-                maxLength: 500,
-                textCapitalization: TextCapitalization.sentences,
-                style: const TextStyle(fontSize: 17),
-                decoration: InputDecoration(
-                  labelText: t('What happened?', 'Ano ang nangyari?'),
-                  alignLabelWithHint: true,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _plate,
-                textCapitalization: TextCapitalization.characters,
-                style: const TextStyle(fontSize: 17),
-                decoration: InputDecoration(
-                  labelText:
-                      t('Plate Number (optional)', 'Plaka (opsyonal)'),
-                  prefixIcon: const Icon(Icons.directions_car_rounded),
-                ),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String?>(
-                value: _zoneId,
-                decoration: InputDecoration(
-                  labelText: t('Zone (optional)', 'Zone (opsyonal)'),
-                  prefixIcon: const Icon(Icons.place_rounded),
-                ),
-                items: [
-                  DropdownMenuItem(value: null, child: Text(t('None', 'Wala'))),
-                  for (final z in kZones)
-                    DropdownMenuItem(value: z.id, child: Text(z.name)),
-                ],
-                onChanged: (v) => setState(() => _zoneId = v),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 56,
-                child: FilledButton.icon(
-                  onPressed: _saving ? null : _save,
-                  icon: const Icon(Icons.save_rounded),
-                  label: Text(t('Save Entry', 'I-save ang tala'),
-                      style: const TextStyle(
-                          fontSize: 17, fontWeight: FontWeight.w800)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
