@@ -16,6 +16,10 @@
 
 const VERSION = '__VERSION__';
 const PRECACHE = /*__PRECACHE__*/[];
+// Firebase's own JS, which FlutterFire loads from Google's CDN at start-up
+// — pre-cached too, or the app couldn't even start offline after a single
+// online visit (that first visit runs before this worker is in control).
+const CDN_PRECACHE = /*__CDN_PRECACHE__*/[];
 const CACHE = `paypark-${VERSION}`;
 
 const CDN_HOSTS = [
@@ -30,7 +34,7 @@ self.addEventListener('install', (event) => {
       const cache = await caches.open(CACHE);
       // One by one so a single missing file doesn't sink the whole install.
       await Promise.all(
-        ['./', ...PRECACHE].map((url) =>
+        ['./', ...PRECACHE, ...CDN_PRECACHE].map((url) =>
           cache.add(new Request(url, { cache: 'reload' })).catch((e) =>
             console.warn('[offline_sw] precache skipped', url, e))));
       await self.skipWaiting();

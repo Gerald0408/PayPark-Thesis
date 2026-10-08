@@ -441,6 +441,29 @@ class YosRepository extends ChangeNotifier {
             (d) => (d.data() as Map<String, dynamic>?)?['is_admin'] == true);
       });
 
+  /// The Super Admin's uid — the account that claimed meta/admin_bootstrap
+  /// by registering first as Admin (see [completeRegistration]). One
+  /// person by construction: the sentinel can't be changed in-app, so
+  /// handing the role to someone else is a Firebase Console edit of
+  /// admin_uid. Readable by any signed-in user (see firestore.rules).
+  /// Same "fresh Stream per call, cache it yourself" contract as
+  /// [currentUserIsAdmin].
+  Stream<String?> get superAdminUid => _db
+      .collection('meta')
+      .doc('admin_bootstrap')
+      .snapshots()
+      .map((d) => d.data()?['admin_uid'] as String?);
+
+  /// Whether the signed-in user is the Super Admin — prices, admins and
+  /// final control (see firestore.rules' isSuperAdmin()). Admins can
+  /// monitor collectors, run reports and help with sign-ins, but not
+  /// these.
+  Stream<bool> get currentUserIsSuperAdmin =>
+      _auth.authStateChanges().asyncExpand((user) {
+        if (user == null) return Stream.value(false);
+        return superAdminUid.map((uid) => uid == user.uid);
+      });
+
   /// Live view of whoever's currently signed in as a full [Collector] —
   /// the same name/username/role/registered-date captured at registration
   /// — for ProfileScreen's account details card. Null while signed out or

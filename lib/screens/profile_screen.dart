@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -67,6 +69,10 @@ class _ProfileBodyState extends State<_ProfileBody> {
   late final Stream<Collector?> _profile =
       YosRepository.instance.currentCollectorProfile;
 
+  /// Whether this account is the Super Admin — for the role pill.
+  bool _isSuperAdmin = false;
+  StreamSubscription<bool>? _superSub;
+
   bool _editing = false;
   bool _saving = false;
   final _formKey = GlobalKey<FormState>();
@@ -99,6 +105,12 @@ class _ProfileBodyState extends State<_ProfileBody> {
     // listeners on its own.
     _name.addListener(_onFieldChanged);
     _phone.addListener(_onFieldChanged);
+    _superSub = YosRepository.instance.currentUserIsSuperAdmin.listen(
+      (v) {
+        if (mounted) setState(() => _isSuperAdmin = v);
+      },
+      onError: (Object e) => debugPrint('superAdmin error (ignored): $e'),
+    );
   }
 
   void _onFieldChanged() {
@@ -107,6 +119,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
 
   @override
   void dispose() {
+    _superSub?.cancel();
     _name.dispose();
     _phone.dispose();
     _birthdayText.dispose();
@@ -378,9 +391,11 @@ class _ProfileBodyState extends State<_ProfileBody> {
                               color: YosColors.accentDeep,
                               borderRadius: BorderRadius.circular(999)),
                           child: Text(
-                              me.isAdmin
-                                  ? t('Admin', 'Tagapangasiwa')
-                                  : t('Collector', 'Kolektor'),
+                              _isSuperAdmin
+                                  ? t('Super Admin', 'Super Admin')
+                                  : me.isAdmin
+                                      ? t('Admin', 'Tagapangasiwa')
+                                      : t('Collector', 'Kolektor'),
                               style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w800,

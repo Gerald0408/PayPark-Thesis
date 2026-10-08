@@ -68,8 +68,8 @@ class _DriverPinDialogState extends State<DriverPinDialog> {
       await DriverAccountService.instance.setPin(
           rfidTag: widget.rfidTag, driverName: widget.driverName, pin: pin);
       YosRepository.instance.logAudit(AuditAction.driverPortalPin,
-          '${_hasAccess == true ? 'Reset' : 'Set up'} driver portal PIN for '
-          '${widget.driverName} (card ${widget.rfidTag})');
+          '${_hasAccess == true ? 'Reset' : 'Set up'} Driver Portal PIN for '
+          '${widget.driverName} (Card ${widget.rfidTag})');
       if (!mounted) return;
       Navigator.of(context).pop();
       Toast.success(
@@ -110,7 +110,7 @@ class _DriverPinDialogState extends State<DriverPinDialog> {
 
     return AlertDialog(
       backgroundColor: YosColors.surface,
-      title: Text(t('Driver portal PIN', 'PIN para sa driver portal'),
+      title: Text(t('Driver Portal PIN', 'PIN para sa driver portal'),
           style: TextStyle(color: YosColors.ink, fontWeight: FontWeight.w800)),
       content: SingleChildScrollView(
         child: Column(

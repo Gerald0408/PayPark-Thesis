@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -29,6 +31,28 @@ class _TrashScreenState extends State<TrashScreen> {
   late final Stream<List<TrashedCollector>> _trashed =
       YosRepository.instance.trashedCollectors();
 
+  // Deleting forever and restoring a former Admin are the Super Admin's
+  // alone (see firestore.rules); other Admins can restore Collectors.
+  bool _isSuperAdmin = false;
+  StreamSubscription<bool>? _superSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _superSub = YosRepository.instance.currentUserIsSuperAdmin.listen(
+      (v) {
+        if (mounted) setState(() => _isSuperAdmin = v);
+      },
+      onError: (Object e) => debugPrint('superAdmin error (ignored): $e'),
+    );
+  }
+
+  @override
+  void dispose() {
+    _superSub?.cancel();
+    super.dispose();
+  }
+
   Future<void> _restore(BuildContext context, TrashedCollector c) async {
     final ok = await showAppConfirmDialog(
       context,
@@ -47,7 +71,8 @@ class _TrashScreenState extends State<TrashScreen> {
     try {
       await YosRepository.instance.restoreCollector(c.uid, c.name);
       if (context.mounted) {
-        Toast.success(context, t('${c.name} restored', 'Na-restore si ${c.name}'));
+        Toast.success(
+            context, t('${c.name} restored', 'Na-restore si ${c.name}'));
       }
     } catch (_) {
       if (context.mounted) {
@@ -60,7 +85,8 @@ class _TrashScreenState extends State<TrashScreen> {
   Future<void> _deleteForever(BuildContext context, TrashedCollector c) async {
     final ok = await showAppConfirmDialog(
       context,
-      title: t('Delete ${c.name} forever?', 'Burahin si ${c.name} nang tuluyan?'),
+      title:
+          t('Delete ${c.name} forever?', 'Burahin si ${c.name} nang tuluyan?'),
       message: t(
           '${c.name} (@${c.username}) will be permanently '
               'removed from the trash bin. This can\'t be undone — their '
@@ -214,41 +240,44 @@ class _TrashScreenState extends State<TrashScreen> {
                                 ],
                               ),
                             ),
-                            PopupMenuButton<_RowAction>(
-                              icon: Icon(Icons.more_vert_rounded,
-                                  color: YosColors.ink),
-                              onSelected: (action) {
-                                switch (action) {
-                                  case _RowAction.restore:
-                                    _restore(context, c);
-                                    break;
-                                  case _RowAction.deleteForever:
-                                    _deleteForever(context, c);
-                                    break;
-                                }
-                              },
-                              itemBuilder: (_) => [
-                                PopupMenuItem(
-                                  value: _RowAction.restore,
-                                  child: ListTile(
-                                    leading: Icon(Icons.restore_rounded,
-                                        color: YosColors.accentDeep),
-                                    title: Text(t('Restore', 'I-restore')),
-                                    contentPadding: EdgeInsets.zero,
+                            if (_isSuperAdmin || !c.isAdmin)
+                              PopupMenuButton<_RowAction>(
+                                icon: Icon(Icons.more_vert_rounded,
+                                    color: YosColors.ink),
+                                onSelected: (action) {
+                                  switch (action) {
+                                    case _RowAction.restore:
+                                      _restore(context, c);
+                                      break;
+                                    case _RowAction.deleteForever:
+                                      _deleteForever(context, c);
+                                      break;
+                                  }
+                                },
+                                itemBuilder: (_) => [
+                                  PopupMenuItem(
+                                    value: _RowAction.restore,
+                                    child: ListTile(
+                                      leading: Icon(Icons.restore_rounded,
+                                          color: YosColors.accentDeep),
+                                      title: Text(t('Restore', 'I-restore')),
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
                                   ),
-                                ),
-                                PopupMenuItem(
-                                  value: _RowAction.deleteForever,
-                                  child: ListTile(
-                                    leading: Icon(Icons.delete_forever_rounded,
-                                        color: YosColors.bad),
-                                    title: Text(
-                                        t('Delete Forever', 'Burahin nang Tuluyan')),
-                                    contentPadding: EdgeInsets.zero,
-                                  ),
-                                ),
-                              ],
-                            ),
+                                  if (_isSuperAdmin)
+                                    PopupMenuItem(
+                                      value: _RowAction.deleteForever,
+                                      child: ListTile(
+                                        leading: Icon(
+                                            Icons.delete_forever_rounded,
+                                            color: YosColors.bad),
+                                        title: Text(t('Delete Forever',
+                                            'Burahin nang Tuluyan')),
+                                        contentPadding: EdgeInsets.zero,
+                                      ),
+                                    ),
+                                ],
+                              ),
                           ],
                         ),
                       ),

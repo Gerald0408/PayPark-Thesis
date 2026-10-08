@@ -524,29 +524,29 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
               else ...[
                 SizedBox(
                   height: 58,
-                  child: FilledButton.icon(
+                  child: FilledButton(
                     onPressed: () => _checkOut(print: printerReady),
-                    icon: Icon(printerReady
-                        ? Icons.print_rounded
-                        : Icons.logout_rounded),
-                    label: Text(
+                    child: Text(
                         printerReady
                             ? t('Collect ₱${due.toStringAsFixed(0)} & print receipt',
                                 'Singilin ₱${due.toStringAsFixed(0)} at i-print')
-                            : t('Collect ₱${due.toStringAsFixed(0)} (no printer)',
-                                'Singilin ₱${due.toStringAsFixed(0)} (walang printer)'),
+                            : t('Collect ₱${due.toStringAsFixed(0)}',
+                                'Singilin ₱${due.toStringAsFixed(0)}'),
                         style: const TextStyle(
                             fontSize: 18, fontWeight: FontWeight.w800)),
                   ),
                 ),
                 if (widget.canSwitchToTimeIn)
-                  TextButton(
-                    onPressed: () =>
-                        Navigator.of(context).pop(kSwitchVisitMode),
-                    child: Text(
-                        t('Not leaving? Start a new TIME IN instead',
-                            'Hindi aalis? Bagong PASOK na lang'),
-                        style: const TextStyle(fontSize: 16)),
+                  Center(
+                    child: TextButton(
+                      onPressed: () =>
+                          Navigator.of(context).pop(kSwitchVisitMode),
+                      child: Text(
+                          t('Not leaving? Start a new TIME IN instead',
+                              'Hindi aalis? Bagong PASOK na lang'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 13)),
+                    ),
                   ),
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(false),

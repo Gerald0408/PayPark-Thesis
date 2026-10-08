@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -49,16 +51,50 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
   late final Stream<List<Collector>> _collectors =
       YosRepository.instance.allCollectors();
 
+  /// The Super Admin's uid (see YosRepository.superAdminUid) — decides
+  /// role labels and which row actions this viewer gets.
+  String? _superAdminUid;
+  StreamSubscription<String?>? _superSub;
+
+  bool get _iAmSuperAdmin =>
+      _superAdminUid != null &&
+      _superAdminUid == FirebaseAuth.instance.currentUser?.uid;
+
+  bool _isSuper(Collector c) => c.uid == _superAdminUid;
+
+  String _roleLabel(Collector c) => _isSuper(c)
+      ? t('Super Admin', 'Super Admin')
+      : c.isAdmin
+          ? t('Admin', 'Tagapangasiwa')
+          : t('Collector', 'Kolektor');
+
+  IconData _roleIcon(Collector c) => _isSuper(c)
+      ? Icons.workspace_premium_rounded
+      : c.isAdmin
+          ? Icons.shield_rounded
+          : Icons.person_rounded;
+
+  /// Whether this viewer may act on [c] at all — mirrors firestore.rules:
+  /// the Super Admin manages everyone; an Admin manages only Collectors.
+  bool _canManage(Collector c) => _iAmSuperAdmin || !c.isAdmin;
+
   @override
   void initState() {
     super.initState();
     _search.addListener(() {
       setState(() => _query = _search.text.trim().toLowerCase());
     });
+    _superSub = YosRepository.instance.superAdminUid.listen(
+      (uid) {
+        if (mounted) setState(() => _superAdminUid = uid);
+      },
+      onError: (Object e) => debugPrint('superAdminUid error (ignored): $e'),
+    );
   }
 
   @override
   void dispose() {
+    _superSub?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -76,9 +112,10 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
     // long collector roster. Partition rather than sort so each group
     // keeps allCollectors()' own created_at-descending order stably,
     // instead of relying on List.sort's ordering guarantees.
-    final admins = matching.where((c) => c.isAdmin).toList();
+    final supers = matching.where(_isSuper).toList();
+    final admins = matching.where((c) => c.isAdmin && !_isSuper(c)).toList();
     final others = matching.where((c) => !c.isAdmin).toList();
-    return [...admins, ...others];
+    return [...supers, ...admins, ...others];
   }
 
   Future<void> _confirmRemoveCollector(
@@ -170,9 +207,7 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                 : YosColors.mint,
                             borderRadius: BorderRadius.circular(16)),
                         child: Icon(
-                            c.isAdmin
-                                ? Icons.shield_rounded
-                                : Icons.person_rounded,
+                            _roleIcon(c),
                             // YosColors.onAccent, not a fixed color, on the
                             // admin badge, so this stays correct even if a
                             // future palette's accentDeep isn't bright in
@@ -192,9 +227,7 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                     fontWeight: FontWeight.w800,
                                     fontSize: 18)),
                             Text(
-                                c.isAdmin
-                                    ? t('Admin', 'Tagapangasiwa')
-                                    : t('Collector', 'Kolektor'),
+                                _roleLabel(c),
                                 style: TextStyle(
                                     color: YosColors.sub,
                                     fontWeight: FontWeight.w600,
@@ -262,10 +295,12 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
               'Alisin ang Admin kay ${c.name}?'),
       message: makeAdmin
           ? t(
-              '${c.name} will get full Admin access — the same as you: '
-                  'fees, settings, collectors, and everything else here.',
-              '${c.name} ay magkakaroon ng buong Admin access — kagaya mo: '
-                  'mga bayarin, settings, kolektor, at lahat ng iba pa dito.')
+              '${c.name} will be able to monitor collectors, see reports '
+                  'and help with sign-ins. Prices and Admins stay with you, '
+                  'the Super Admin.',
+              '${c.name} ay makakapag-monitor ng mga kolektor, makakakita '
+                  'ng ulat at makakatulong sa pag-sign in. Ang presyo at mga '
+                  'Admin ay mananatili sa iyo, ang Super Admin.')
           : t(
               '${c.name} goes back to a regular Collector. They can still '
                   'log entries and print receipts, just not manage the app.',
@@ -385,9 +420,7 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                         borderRadius:
                                             BorderRadius.circular(14)),
                                     child: Icon(
-                                        c.isAdmin
-                                            ? Icons.shield_rounded
-                                            : Icons.person_rounded,
+                                        _roleIcon(c),
                                         color: c.isAdmin
                                             ? YosColors.onAccent
                                             : YosColors.ink),
@@ -424,8 +457,8 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                         ),
                                         Text(
                                             t(
-                                                '@${c.username} · ${c.isAdmin ? "Admin" : "Collector"} · Registered ${DateFormat('MMM d, y').format(c.createdAt)}',
-                                                '@${c.username} · ${c.isAdmin ? "Tagapangasiwa" : "Kolektor"} · nagparehistro noong ${DateFormat('MMM d, y').format(c.createdAt)}'),
+                                                '@${c.username} · ${_roleLabel(c)} · Registered ${DateFormat('MMM d, y').format(c.createdAt)}',
+                                                '@${c.username} · ${_roleLabel(c)} · nagparehistro noong ${DateFormat('MMM d, y').format(c.createdAt)}'),
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
@@ -441,7 +474,11 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                   // your own row keeps that consistent
                                   // instead of showing actions that would
                                   // just fail.
-                                  if (!isSelf)
+                                  // Only actions this viewer's role allows —
+                                  // the Super Admin manages everyone, an
+                                  // Admin only Collectors (firestore.rules
+                                  // enforces the same).
+                                  if (!isSelf && _canManage(c))
                                     PopupMenuButton<_RowAction>(
                                       icon: Icon(Icons.more_vert_rounded,
                                           color: YosColors.ink),
@@ -462,7 +499,9 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                         }
                                       },
                                       itemBuilder: (_) => [
-                                        if (c.isAdmin)
+                                        // Only the Super Admin assigns or
+                                        // removes Admins.
+                                        if (_iAmSuperAdmin && c.isAdmin)
                                           PopupMenuItem(
                                             value: _RowAction.removeAdmin,
                                             child: ListTile(
@@ -475,7 +514,7 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                               contentPadding: EdgeInsets.zero,
                                             ),
                                           )
-                                        else
+                                        else if (_iAmSuperAdmin)
                                           PopupMenuItem(
                                             value: _RowAction.makeAdmin,
                                             child: ListTile(

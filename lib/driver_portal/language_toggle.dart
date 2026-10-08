@@ -23,8 +23,12 @@ class LanguageToggle extends StatelessWidget {
             )
           : null,
       segments: const [
-        ButtonSegment(value: AppLocale.english, label: Text('English')),
-        ButtonSegment(value: AppLocale.filipino, label: Text('Filipino')),
+        ButtonSegment(
+            value: AppLocale.english,
+            label: Text('English')),
+        ButtonSegment(
+            value: AppLocale.filipino,
+            label: Text('Filipino')),
       ],
       selected: {fil ? AppLocale.filipino : AppLocale.english},
       onSelectionChanged: (s) => LocaleController.instance.setLocale(s.first),

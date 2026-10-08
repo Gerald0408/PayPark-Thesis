@@ -34,6 +34,19 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/collectors/$(request.auth.uid)).data.is_admin == true;
     }
 
+    // The one Super Admin (barangay captain / treasurer): the admin whose
+    // uid claimed meta/admin_bootstrap by registering first as Admin.
+    // That sentinel can't be updated in-app (see its rules below), so
+    // there's always exactly one, and moving the role to someone else is
+    // a Firebase Console edit of admin_uid. Super Admin alone sets prices,
+    // assigns/removes Admins, acts on Admin accounts and deletes from the
+    // trash for good; Admins (supervisors) monitor collectors, read
+    // reports and help with sign-ins.
+    function isSuperAdmin() {
+      return isAdmin()
+        && get(/databases/$(database)/documents/meta/admin_bootstrap).data.admin_uid == request.auth.uid;
+    }
+
     // Driver portal account (see DriverAccountService): a signed-in uid
     // that a collector granted access to via drivers/{uid}. Deleting that
     // doc (a PIN reset issues a new account) revokes the old one at once.
@@ -89,7 +102,9 @@ service cloud.firestore {
         || (isAdmin()
           && request.auth.uid != uid
           && request.resource.data.keys().hasOnly(
-               ['name', 'username', 'phone', 'birthday', 'created_at', 'is_admin', 'face_id_enrolled']));
+               ['name', 'username', 'phone', 'birthday', 'created_at', 'is_admin', 'face_id_enrolled'])
+          // Restoring a former Admin is the Super Admin's call alone.
+          && (request.resource.data.is_admin != true || isSuperAdmin()));
       // A collector reads their own doc regardless of Face ID status —
       // the app needs this read to work even when gated, so it can learn
       // to redirect to enrollment in the first place (see RootShell). The
@@ -173,14 +188,18 @@ service cloud.firestore {
         )
         ||
         (
-          isAdmin()
+          // Assigning / removing Admin is the Super Admin's alone.
+          isSuperAdmin()
           && request.auth.uid != uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_admin'])
         );
       // Deleting is how the admin deactivates an account — see
       // YosRepository.deactivateCollector — there's no admin-console
       // password reset either, so a locked-out collector just re-registers.
-      allow delete: if isAdmin();
+      // An Admin may only remove Collectors; Admin accounts (the Super
+      // Admin's included) are the Super Admin's to remove.
+      allow delete: if isSuperAdmin()
+        || (isAdmin() && resource.data.is_admin != true);
     }
 
     // Trash bin for deactivated collectors — see
@@ -198,10 +217,15 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
              'name', 'username', 'phone', 'birthday', 'created_at',
              'is_admin', 'face_id_enrolled', 'deactivated_at', 'deactivated_by'
-           ]);
+           ])
+        // Same as collectors delete: only the Super Admin trashes an Admin.
+        && (request.resource.data.is_admin != true || isSuperAdmin());
       // Covers both exits from the trash bin: restoring (recreate under
-      // collectors/{uid}, then delete here) and permanently deleting.
-      allow delete: if isAdmin();
+      // collectors/{uid}, then delete here) — any Admin, recognizable by
+      // the collectors doc already being back — and permanently deleting,
+      // which is final control: Super Admin only.
+      allow delete: if isSuperAdmin()
+        || (isAdmin() && exists(/databases/$(database)/documents/collectors/$(uid)));
     }
 
     // Cloud copy of a collector's face embedding — lets a face enrolled on
@@ -278,21 +302,21 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Per-vehicle-type fee overrides, editable only by the admin — see
-    // FeeSettingsService. Any collector with Face ID enrolled can read
-    // them, since logging an entry needs the live rate; write already
-    // requires isAdmin(), which itself now requires Face ID too.
+    // Per-vehicle-type fee overrides (and base hours, extra-hour and lost
+    // ticket fees) — see FeeSettingsService. Any collector with Face ID
+    // enrolled can read them, since logging an entry needs the live rate;
+    // only the Super Admin sets prices.
     match /settings/fees {
       allow read: if hasFaceId();
-      allow write: if isAdmin();
+      allow write: if isSuperAdmin();
     }
 
     // RFID loyalty points rate — see PointsSettingsService. Same shape as
     // settings/fees just above: any enrolled collector reads it (needed
-    // to compute/redeem points at entry time), only the admin sets it.
+    // to compute/redeem points at entry time), only the Super Admin sets it.
     match /settings/points {
       allow read: if hasFaceId();
-      allow write: if isAdmin();
+      allow write: if isSuperAdmin();
     }
 
     // Vehicle registry (see VehicleRegistry / RegisteredVehicle) — plate
@@ -315,7 +339,8 @@ service cloud.firestore {
           'documents_path', 'documents_url',
           'rfid_tag', 'rfid_tag_key', 'points'
         ]);
-      allow delete: if hasFaceId();
+      // Removing a registration is Admin-only; collectors register/edit.
+      allow delete: if isAdmin();
     }
 
     // Core dashboard resource — mandatory Face ID gate applies in full:
@@ -378,7 +403,7 @@ service cloud.firestore {
     // file one — errors happen before Face ID enrollment too — but only
     // for itself, and only admins can read them back. Append-only.
     match /error_logs/{logId} {
-      allow read: if isAdmin();
+      allow read: if isSuperAdmin(); // technical logs: Super Admin only
       allow create: if request.auth != null
         && request.resource.data.user_id == request.auth.uid
         && request.resource.data.keys().hasOnly([

@@ -13,6 +13,10 @@ import 'dart:io';
 
 const _out = 'build/driver_web';
 
+/// Firebase JS SDK modules FlutterFire loads — one per Firebase plugin in
+/// pubspec.yaml ('app' is firebase_core). Update if a plugin is added.
+const _firebaseServices = ['app', 'auth', 'firestore', 'storage', 'app-check'];
+
 Future<void> main() async {
   final build = await Process.start(
     'flutter',
@@ -40,16 +44,34 @@ Future<void> main() async {
   }
   files.sort();
 
+  // Firebase JS SDK files FlutterFire will import from the CDN — the
+  // version is the one compiled into main.dart.js.
+  final mainJs = File('$_out/main.dart.js').readAsStringSync();
+  final sdk = RegExp(r'flutterfire_web_sdk_version[\s\S]{0,200}?"(\d+\.\d+\.\d+)"')
+      .firstMatch(mainJs)
+      ?.group(1);
+  if (sdk == null) {
+    stderr.writeln('Could not find the Firebase JS SDK version in '
+        'main.dart.js — the app will only work offline from the 2nd visit.');
+  }
+  final cdn = [
+    if (sdk != null)
+      for (final s in _firebaseServices)
+        'https://www.gstatic.com/firebasejs/$sdk/firebase-$s.js',
+  ];
+
   final sw = File('$_out/offline_sw.js');
   final version = DateTime.now().millisecondsSinceEpoch.toString();
-  final list = files.map((f) => "  '$f',").join('\n');
+  String js(List<String> l) => '[\n${l.map((f) => "  '$f',").join('\n')}\n]';
   sw.writeAsStringSync(sw
       .readAsStringSync()
       .replaceFirst("'__VERSION__'", "'$version'")
-      .replaceFirst('/*__PRECACHE__*/[]', '[\n$list\n]'));
+      .replaceFirst('/*__PRECACHE__*/[]', js(files))
+      .replaceFirst('/*__CDN_PRECACHE__*/[]', js(cdn)));
 
-  stdout.writeln('\nOffline: ${files.length} files pre-cached '
-      '(version $version). Deploy with: firebase deploy --only hosting');
+  stdout.writeln('\nOffline: ${files.length} files + ${cdn.length} Firebase '
+      'SDK files pre-cached (version $version, Firebase JS ${sdk ?? '?'}). '
+      'Deploy with: firebase deploy --only hosting');
 }
 
 /// Files a phone never needs offline: debug symbols, the service workers

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -10,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import '../core/constants.dart';
 import '../core/theme.dart';
 import '../models/registered_vehicle.dart';
+import '../services/firestore_service.dart';
 import '../services/locale_controller.dart';
 import '../services/points_settings_service.dart';
 import '../services/registry_service.dart';
@@ -827,9 +829,20 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
   String? _licensePhotoUrl;
   String? _orCrPhotoUrl;
 
+  /// Deleting a registration is Admin-only (firestore.rules); collectors
+  /// can register and edit, not delete.
+  bool _isAdmin = false;
+  StreamSubscription<bool>? _adminSub;
+
   @override
   void initState() {
     super.initState();
+    _adminSub = YosRepository.instance.currentUserIsAdmin.listen(
+      (v) {
+        if (mounted) setState(() => _isAdmin = v);
+      },
+      onError: (Object e) => debugPrint('currentUserIsAdmin error (ignored): $e'),
+    );
     final e = widget.existing;
     _driver = TextEditingController(text: e?.driverName ?? '');
     _plate = TextEditingController(
@@ -878,6 +891,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
 
   @override
   void dispose() {
+    _adminSub?.cancel();
     _driver.dispose();
     _plate.dispose();
     _rfid.dispose();
@@ -999,7 +1013,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                 : t('Register Vehicle', 'Magrehistro ng Sasakyan'),
             style: const TextStyle(fontWeight: FontWeight.w800)),
         actions: [
-          if (editing)
+          if (editing && _isAdmin)
             IconButton(
                 onPressed: _delete,
                 icon: const Icon(Icons.delete_outline_rounded)),
@@ -1148,7 +1162,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                               ),
                             ),
                             icon: const Icon(Icons.pin_rounded),
-                            label: Text(t('Driver portal PIN',
+                            label: Text(t('Driver Portal PIN',
                                 'PIN para sa driver portal')),
                           ),
                         ],
@@ -1162,7 +1176,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                         child: CircularProgressIndicator(color: YosColors.ink))
                     : BreathingGlowButton(
                         label: editing
-                            ? t('Save changes', 'I-save ang mga Pagbabago')
+                            ? t('Save Changes', 'I-save ang mga Pagbabago')
                             : t('Register Vehicle', 'Magrehistro ng Sasakyan'),
                         icon: Icons.check_rounded,
                         onPressed: _save,

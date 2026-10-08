@@ -9,6 +9,7 @@ import '../models/transaction.dart';
 import '../services/driver_account_service.dart';
 import '../services/locale_controller.dart';
 import '../services/points_settings_service.dart' show formatPoints;
+import '../widgets/vehicle_type_tile.dart';
 import 'language_toggle.dart';
 
 /// Driver portal home: total points, which discounts they can get, their
@@ -187,8 +188,10 @@ class _VehicleCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.directions_car_rounded, size: 28),
-              const SizedBox(width: 10),
+              // Same vehicle-type picture the collector app shows.
+              VehicleTypeBadge(
+                  type: VehicleType.fromLabel(vehicle.vehicleType), size: 44),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(vehicle.plateNumber,
                     style: TextStyle(

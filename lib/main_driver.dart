@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'core/theme.dart';
 import 'driver_portal/driver_home_screen.dart';
@@ -31,6 +32,15 @@ Future<void> main() async {
   );
   try {
     await LocaleController.instance.init();
+  } catch (_) {}
+  // Load the theme's Inter weights (bundled in assets/google_fonts, so no
+  // network needed) before the first frame. Otherwise widgets that size
+  // themselves to their text — like the English / Filipino switch —
+  // measure with the fallback font and clip once Inter arrives.
+  try {
+    YosTheme.current();
+    await GoogleFonts.pendingFonts()
+        .timeout(const Duration(seconds: 5));
   } catch (_) {}
   runApp(const DriverPortalApp());
 }

@@ -24,8 +24,9 @@ class _FeesScreenState extends State<FeesScreen> {
   // must see the same Stream instance across every rebuild (fee edits
   // trigger rebuilds via _onFeesChanged), not a fresh one re-read from the
   // getter each time. See YosRepository.currentUserIsAdmin's doc comment.
-  late final Stream<bool> _isAdminStream =
-      YosRepository.instance.currentUserIsAdmin;
+  // Prices are the Super Admin's alone; everyone else sees them read-only.
+  late final Stream<bool> _canEditStream =
+      YosRepository.instance.currentUserIsSuperAdmin;
 
   @override
   void initState() {
@@ -56,7 +57,7 @@ class _FeesScreenState extends State<FeesScreen> {
       return;
     }
     // Was a bare `await` with no try/catch: a denied write (e.g. Firestore
-    // rules rejecting it — settings/fees requires isAdmin(), which itself
+    // rules rejecting it — settings/fees requires isSuperAdmin(), which itself
     // requires Face ID enrolled, not just is_admin true) got silently
     // rolled back by Firestore's own optimistic-write revert, with no
     // toast either way — the dialog just closed and the rate quietly
@@ -184,11 +185,11 @@ class _FeesScreenState extends State<FeesScreen> {
   /// admin-only, reached from a button inside the dialog rather than the
   /// row tap directly, so a view-only account can still see the same
   /// history an admin sees.
-  Future<void> _showFeeDetails(VehicleType type, bool isAdmin) async {
+  Future<void> _showFeeDetails(VehicleType type, bool canEdit) async {
     final editRequested = await showDialog<bool>(
       context: context,
       builder: (dialogContext) =>
-          _FeeDetailsDialog(type: type, isAdmin: isAdmin),
+          _FeeDetailsDialog(type: type, canEdit: canEdit),
     );
     if (editRequested == true) await _editFee(type);
   }
@@ -205,33 +206,33 @@ class _FeesScreenState extends State<FeesScreen> {
       body: TouchGlowOverlay(
         child: SafeArea(
           child: StreamBuilder<bool>(
-            stream: _isAdminStream,
+            stream: _canEditStream,
             initialData: false,
             builder: (context, snap) {
-              final isAdmin = snap.data ?? false;
+              final canEdit = snap.data ?? false;
               return ListView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
                 children: [
                   PopIn(
                     child: GlassCard(
-                      color: isAdmin ? YosColors.mint : YosColors.pistachio,
+                      color: canEdit ? YosColors.mint : YosColors.pistachio,
                       padding: const EdgeInsets.all(16),
                       child: Row(
                         children: [
                           Icon(
-                              isAdmin ? Icons.edit_rounded : Icons.lock_rounded,
+                              canEdit ? Icons.edit_rounded : Icons.lock_rounded,
                               color: YosColors.ink,
                               size: 20),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              isAdmin
+                              canEdit
                                   ? t(
                                       'Rates Fixed By $kOrdinanceRef. Tap a rate to update it — changes sync to every device.',
                                       'Naka-fix ang mga bayad ayon sa $kOrdinanceRef. I-tap ang isang rate para i-update ito — nag-sync ang mga pagbabago sa lahat ng device.')
                                   : t(
-                                      'Rates Fixed By $kOrdinanceRef. View only — ask an admin for changes.',
-                                      'Naka-fix ang mga bayad ayon sa $kOrdinanceRef. Tingin lang — magtanong sa admin para sa mga pagbabago.'),
+                                      'Rates Fixed By $kOrdinanceRef. View only — only the Super Admin can change prices.',
+                                      'Naka-fix ang mga bayad ayon sa $kOrdinanceRef. Tingin lang — ang Super Admin lang ang makakapagpalit ng presyo.'),
                               style: TextStyle(
                                   color: YosColors.ink,
                                   fontSize: 12,
@@ -250,7 +251,7 @@ class _FeesScreenState extends State<FeesScreen> {
                         delayMs: 80 + i * 60,
                         child: GlassCard(
                           onTap: () =>
-                              _showFeeDetails(VehicleType.values[i], isAdmin),
+                              _showFeeDetails(VehicleType.values[i], canEdit),
                           child: Row(
                             children: [
                               VehicleTypeBadge(
@@ -299,7 +300,7 @@ class _FeesScreenState extends State<FeesScreen> {
                                           ?.copyWith(fontSize: 30)),
                                 ),
                               ),
-                              if (isAdmin) ...[
+                              if (canEdit) ...[
                                 const SizedBox(width: 6),
                                 Icon(Icons.edit_rounded,
                                     color: YosColors.sub, size: 18),
@@ -311,7 +312,7 @@ class _FeesScreenState extends State<FeesScreen> {
                     ),
                   const SizedBox(height: 12),
                   _TimeChargesCard(
-                    isAdmin: isAdmin,
+                    canEdit: canEdit,
                     onEditBaseHours: _editBaseHours,
                     onEditExtra: _editExtraHour,
                     onEditLostTicket: _editLostTicketFee,
@@ -334,9 +335,9 @@ class _FeesScreenState extends State<FeesScreen> {
 /// query needed. Popping `true` (the "Edit rate" button, admin only) tells
 /// FeesScreen's [_showFeeDetails] to chain straight into [_EditFeeDialog].
 class _FeeDetailsDialog extends StatelessWidget {
-  const _FeeDetailsDialog({required this.type, required this.isAdmin});
+  const _FeeDetailsDialog({required this.type, required this.canEdit});
   final VehicleType type;
-  final bool isAdmin;
+  final bool canEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -400,7 +401,7 @@ class _FeeDetailsDialog extends StatelessWidget {
               ],
             ),
           ),
-          if (isAdmin)
+          if (canEdit)
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
               child: Material(
@@ -581,13 +582,13 @@ class _EditFeeDialogState extends State<_EditFeeDialog> {
 /// to change it.
 class _TimeChargesCard extends StatelessWidget {
   const _TimeChargesCard({
-    required this.isAdmin,
+    required this.canEdit,
     required this.onEditBaseHours,
     required this.onEditExtra,
     required this.onEditLostTicket,
   });
 
-  final bool isAdmin;
+  final bool canEdit;
   final VoidCallback onEditBaseHours;
   final ValueChanged<VehicleType> onEditExtra;
   final VoidCallback onEditLostTicket;
@@ -604,7 +605,7 @@ class _TimeChargesCard extends StatelessWidget {
     Widget row(String label, String value, VoidCallback onTap,
             {String? unit}) =>
         InkWell(
-          onTap: isAdmin ? onTap : null,
+          onTap: canEdit ? onTap : null,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
@@ -632,7 +633,7 @@ class _TimeChargesCard extends StatelessWidget {
                   textAlign: TextAlign.right,
                   style: TextStyle(color: YosColors.ink),
                 ),
-                if (isAdmin) ...[
+                if (canEdit) ...[
                   const SizedBox(width: 6),
                   Icon(Icons.edit_rounded, color: YosColors.sub, size: 18),
                 ],

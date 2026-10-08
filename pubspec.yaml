@@ -84,6 +84,7 @@ flutter:
     - assets/icon/logo.png
     - assets/icon/logo_receipt.png
     - assets/vehicles/
+    - assets/google_fonts/
     - assets/models/mobilefacenet.tflite
     - assets/videos/intro_background.mp4
 

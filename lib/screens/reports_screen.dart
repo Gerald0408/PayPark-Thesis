@@ -51,8 +51,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
     _reload();
   }
 
-  void _reload() => setState(
-      () => _load = YosRepository.instance.transactionsBetween(_start, _end));
+  // Block body, not `() => _load = ...`: an arrow closure returns the
+  // assigned Future, and setState throws "callback argument returned a
+  // Future" — which is what broke Collection Reports on open.
+  void _reload() {
+    final load = YosRepository.instance.transactionsBetween(_start, _end);
+    setState(() {
+      _load = load;
+    });
+  }
 
   void _step(int delta) {
     _anchor = _yearly
