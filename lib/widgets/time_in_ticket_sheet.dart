@@ -42,26 +42,8 @@ class TimeInTicketSheet extends StatefulWidget {
 }
 
 class _TimeInTicketSheetState extends State<TimeInTicketSheet> {
-  late DateTime _timeIn = widget.tx.timestamp;
-
-  /// How many hours the driver wants to park — chosen first, before the
-  /// ticket can print. A guide for the driver (expected time out and
-  /// estimated fee on the ticket); the real fee comes from the actual
-  /// time out.
-  int? _hours;
-  static const _hourChoices = [1, 2, 3, 4, 5, 6, 8, 12];
-
-  DateTime? get _expectedOut =>
-      _hours == null ? null : _timeIn.add(Duration(hours: _hours!));
-
-  double? get _estimate => _hours == null
-      ? null
-      : FeeSettingsService.instance.quote(_type, _timeIn, _expectedOut!).total;
-
-  List<String> get _planLines => _hours == null
-      ? const []
-      : PrinterService.instance.planLines(
-          hours: _hours!, expectedOut: _expectedOut!, estimate: _estimate!);
+  /// Set automatically when the card was tapped — read-only.
+  late final DateTime _timeIn = widget.tx.timestamp;
   GeoTag? _geo;
   bool _busy = false;
   bool _saved = false;
@@ -79,6 +61,7 @@ class _TimeInTicketSheetState extends State<TimeInTicketSheet> {
   List<String> get _rateLines {
     final fees = FeeSettingsService.instance;
     return PrinterService.instance.rateLines(
+      timeIn: _timeIn,
       baseFee: fees.feeFor(_type),
       baseHours: fees.baseHours,
       extraRate: fees.extraHourFeeFor(_type),
@@ -90,11 +73,6 @@ class _TimeInTicketSheetState extends State<TimeInTicketSheet> {
         'Collector: ${YosRepository.instance.currentUserName}',
       ];
 
-  Future<void> _chooseTimeIn() async {
-    final picked = await pickVisitTime(context, initial: _timeIn);
-    if (picked != null && mounted) setState(() => _timeIn = picked);
-  }
-
   /// Saves the time in — unpaid (fee 0) until time out — and counts the
   /// visit on the vehicle's registry entry.
   void _commit({required bool printed}) {
@@ -104,7 +82,6 @@ class _TimeInTicketSheetState extends State<TimeInTicketSheet> {
     YosRepository.instance.saveTransaction(widget.tx.copyWith(
       timestamp: _timeIn,
       fee: 0,
-      plannedHours: _hours,
       printed: printed,
       rfidTagKey: reg?.rfidTag == null
           ? null
@@ -139,7 +116,6 @@ class _TimeInTicketSheetState extends State<TimeInTicketSheet> {
         lostTicketFee: FeeSettingsService.instance.lostTicketFee,
         header: kReceiptHeader,
         extraLines: _extraLines,
-        planLines: _planLines,
       );
       _commit(printed: true);
       HapticFeedback.heavyImpact();
@@ -162,26 +138,6 @@ class _TimeInTicketSheetState extends State<TimeInTicketSheet> {
     widget.onDone();
   }
 
-  Widget _row(String label, String value) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(label,
-                  style: TextStyle(
-                      color: YosColors.sub,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600)),
-            ),
-            Text(value,
-                style: TextStyle(
-                    color: YosColors.ink,
-                    fontSize: 19,
-                    fontWeight: FontWeight.w800)),
-          ],
-        ),
-      );
-
   @override
   Widget build(BuildContext context) {
     final tx = widget.tx;
@@ -197,7 +153,6 @@ class _TimeInTicketSheetState extends State<TimeInTicketSheet> {
       lostTicketFee: FeeSettingsService.instance.lostTicketFee,
       header: kReceiptHeader,
       extraLines: _extraLines,
-      planLines: _planLines,
     );
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -239,59 +194,8 @@ class _TimeInTicketSheetState extends State<TimeInTicketSheet> {
               icon: Icons.login_rounded,
               time: _timeIn,
               highlight: true,
-              onTap: (_busy || _saved) ? null : _chooseTimeIn,
+              onTap: null,
             ),
-            const SizedBox(height: 16),
-            Text(t('How Many Hours?', 'Ilang Oras?'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: YosColors.ink,
-                    fontSize: 19,
-                    fontWeight: FontWeight.w800)),
-            const SizedBox(height: 10),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                for (final h in _hourChoices)
-                  ChoiceChip(
-                    label: Text('$h ${t('Hours', 'Oras')}',
-                        style: const TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.w800)),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-                    selected: _hours == h,
-                    onSelected: (_busy || _saved)
-                        ? null
-                        : (_) => setState(() => _hours = h),
-                  ),
-              ],
-            ),
-            if (_hours != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                decoration: BoxDecoration(
-                  color: YosColors.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: YosColors.glassBorder),
-                ),
-                child: Column(
-                  children: [
-                    _row(t('Expected Time Out', 'Inaasahang Labas'),
-                        TimeOfDay.fromDateTime(_expectedOut!).format(context)),
-                    _row(t('Estimated Fee', 'Tantiyang Bayad'),
-                        '₱${_estimate!.toStringAsFixed(0)}'),
-                    Text(
-                        t('The actual total is computed at Time Out.',
-                            'Ang tunay na kabuuan ay kukuwentahin sa paglabas.'),
-                        style: TextStyle(color: YosColors.sub, fontSize: 14)),
-                  ],
-                ),
-              ),
-            ],
             if (widget.canSwitchToTimeOut)
               TextButton.icon(
                 onPressed: (_busy || _saved)
@@ -332,20 +236,15 @@ class _TimeInTicketSheetState extends State<TimeInTicketSheet> {
               SizedBox(
                 height: 58,
                 child: FilledButton.icon(
-                  // Hours must be chosen first.
-                  onPressed: _hours == null
-                      ? null
-                      : (printerReady ? _print : _saveWithoutPrinting),
+                  onPressed: printerReady ? _print : _saveWithoutPrinting,
                   icon: Icon(printerReady
                       ? Icons.print_rounded
                       : Icons.save_rounded),
                   label: Text(
-                      _hours == null
-                          ? t('Select Hours First', 'Pumili Muna ng Oras')
-                          : printerReady
-                              ? t('Print Time-In Ticket', 'I-print ang Ticket')
-                              : t('Save Time In (no printer)',
-                                  'I-save ang Time In (walang printer)'),
+                      printerReady
+                          ? t('Print Time-In Ticket', 'I-print ang Ticket')
+                          : t('Save Time In (no printer)',
+                              'I-save ang Time In (walang printer)'),
                       style: const TextStyle(
                           fontSize: 18, fontWeight: FontWeight.w800)),
                 ),

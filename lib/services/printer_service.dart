@@ -491,9 +491,6 @@ class PrinterService {
     required double lostTicketFee,
     List<String> header = const [],
     List<String> extraLines = const [],
-    /// Hours Selected / Expected Out / Estimated Fee — printed under the
-    /// time in.
-    List<String> planLines = const [],
     bool reprint = false,
   }) =>
       [
@@ -511,8 +508,6 @@ class PrinterService {
         _timeOfDay(timeIn),
         _dateOnly(timeIn),
         _hr(),
-        ...planLines,
-        if (planLines.isNotEmpty) _hr(),
         ...rateLines,
         _hr(),
         'LOST TICKET FEE: PHP ${lostTicketFee.toStringAsFixed(2)}',
@@ -533,7 +528,6 @@ class PrinterService {
     required double lostTicketFee,
     List<String> header = const [],
     List<String> extraLines = const [],
-    List<String> planLines = const [],
     bool reprint = false,
   }) async {
     final b = <int>[];
@@ -583,11 +577,6 @@ class PrinterService {
     b.addAll(_text(_dateOnly(timeIn)));
     b.addAll(_align(0));
     b.addAll(_text(_hr()));
-    for (final line in planLines) {
-      b.addAll(_text(line));
-    }
-    if (planLines.isNotEmpty) b.addAll(_text(_hr()));
-
     for (final line in rateLines) {
       b.addAll(_text(line));
     }
@@ -616,31 +605,24 @@ class PrinterService {
   String _dateOnly(DateTime d) =>
       '${_two(d.month)}/${_two(d.day)}/${d.year}';
 
-  /// The driver's chosen stay, for the time-in ticket: how many hours they
-  /// picked, when that ends, and what it would cost — a guide only; the
-  /// real fee is worked out from the actual time out.
-  List<String> planLines({
-    required int hours,
-    required DateTime expectedOut,
-    required double estimate,
-  }) =>
-      [
-        _pair('Hours Selected', '$hours Hours'),
-        _pair('Expected Out', _timeOfDay(expectedOut)),
-        _pair('Estimated Fee', 'PHP ${estimate.toStringAsFixed(2)}'),
-      ];
-
-  /// Rate lines for a ticket: what the base fee covers and the hourly rate
-  /// after — so the driver knows the price before they leave.
+  /// Rate lines for a ticket: what the base fee covers, the clock time it
+  /// covers until, and the hourly rate after — so the driver knows the
+  /// price before they leave.
   List<String> rateLines({
+    required DateTime timeIn,
     required double baseFee,
     required int baseHours,
     required double extraRate,
   }) =>
       [
-        _pair('First $baseHours Hours', 'PHP ${baseFee.toStringAsFixed(2)}'),
-        _pair('Each Hours After', 'PHP ${extraRate.toStringAsFixed(2)}'),
+        _pair('First ${_hoursLabel(baseHours)}',
+            'PHP ${baseFee.toStringAsFixed(2)}'),
+        _pair('Covered Until',
+            _timeOfDay(timeIn.add(Duration(hours: baseHours)))),
+        _pair('Each Hour After', 'PHP ${extraRate.toStringAsFixed(2)}'),
       ];
+
+  String _hoursLabel(int hours) => hours == 1 ? '1 Hour' : '$hours Hours';
 
   /// Prints a parking ticket from a ParkingTransaction's fields.
   ///

@@ -27,16 +27,6 @@ class _PricingTestScreenState extends State<PricingTestScreen> {
   late DateTime _timeIn = _today(8, 0);
   late DateTime _timeOut = _today(9, 0);
   bool _lostTicket = false;
-  int _hours = 3;
-
-  List<String> get _planLines {
-    final out = _timeIn.add(Duration(hours: _hours));
-    return PrinterService.instance.planLines(
-      hours: _hours,
-      expectedOut: out,
-      estimate: FeeSettingsService.instance.quote(_type, _timeIn, out).total,
-    );
-  }
 
   static DateTime _today(int h, int m) {
     final n = DateTime.now();
@@ -78,13 +68,13 @@ class _PricingTestScreenState extends State<PricingTestScreen> {
       zoneId: _ticket.zoneId,
       timeIn: _timeIn,
       rateLines: printer.rateLines(
+        timeIn: _timeIn,
         baseFee: fees.feeFor(_type),
         baseHours: fees.baseHours,
         extraRate: fees.extraHourFeeFor(_type),
       ),
       lostTicketFee: fees.lostTicketFee,
       header: ['*** TEST ONLY ***', ...kReceiptHeader],
-      planLines: _planLines,
     );
   }
 
@@ -129,13 +119,13 @@ class _PricingTestScreenState extends State<PricingTestScreen> {
           zoneId: _ticket.zoneId,
           timeIn: _timeIn,
           rateLines: printer.rateLines(
+            timeIn: _timeIn,
             baseFee: fees.feeFor(_type),
             baseHours: fees.baseHours,
             extraRate: fees.extraHourFeeFor(_type),
           ),
           lostTicketFee: fees.lostTicketFee,
           header: ['*** TEST ONLY ***', ...kReceiptHeader],
-          planLines: _planLines,
         );
       } else {
         final tx = _paid;
@@ -269,7 +259,8 @@ class _PricingTestScreenState extends State<PricingTestScreen> {
                     onTap: () async {
                       final picked = await showTimePicker(
                           context: context,
-                          initialTime: TimeOfDay.fromDateTime(_timeIn));
+                          initialTime: TimeOfDay.fromDateTime(_timeIn),
+                          initialEntryMode: TimePickerEntryMode.inputOnly);
                       if (picked != null) {
                         setState(() => _timeIn = DateTime(_timeIn.year,
                             _timeIn.month, _timeIn.day, picked.hour, picked.minute));
@@ -287,7 +278,8 @@ class _PricingTestScreenState extends State<PricingTestScreen> {
                     onTap: () async {
                       final picked = await showTimePicker(
                           context: context,
-                          initialTime: TimeOfDay.fromDateTime(_timeOut));
+                          initialTime: TimeOfDay.fromDateTime(_timeOut),
+                          initialEntryMode: TimePickerEntryMode.inputOnly);
                       if (picked != null) {
                         var out = DateTime(_timeIn.year, _timeIn.month,
                             _timeIn.day, picked.hour, picked.minute);
@@ -303,35 +295,6 @@ class _PricingTestScreenState extends State<PricingTestScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            // Quick ways to move the tap-out time while testing.
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final m in const [-60, -15, 15, 60])
-                  ActionChip(
-                    label: Text('${m > 0 ? '+' : ''}${m.abs() >= 60 ? '${m ~/ 60}h' : '${m}m'}'),
-                    onPressed: () => setState(() {
-                      final out = _timeOut.add(Duration(minutes: m));
-                      if (!out.isBefore(_timeIn)) _timeOut = out;
-                    }),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(t('Hours Selected at Time In', 'Napiling Oras sa Pasok'),
-                style: TextStyle(
-                    color: YosColors.ink, fontSize: 16, fontWeight: FontWeight.w700)),
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final h in const [1, 2, 3, 4, 5, 6, 8, 12])
-                  ChoiceChip(
-                    label: Text('$h Hours'),
-                    selected: _hours == h,
-                    onSelected: (_) => setState(() => _hours = h),
-                  ),
-              ],
-            ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: _lostTicket,

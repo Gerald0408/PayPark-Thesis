@@ -3,10 +3,8 @@ import 'package:flutter/material.dart';
 import '../core/theme.dart';
 import '../models/registered_vehicle.dart';
 import '../models/transaction.dart';
-import '../services/locale_controller.dart';
 import 'check_out_sheet.dart';
 import 'time_in_ticket_sheet.dart';
-import 'toast.dart';
 
 /// What a receipt sheet pops with when the collector picks the other mode
 /// ("check it out instead" / "new TIME IN instead") — the caller
@@ -63,9 +61,9 @@ Future<bool> runVisitFlow(
   return false;
 }
 
-/// Big tappable TIME IN / TIME OUT button showing the chosen time (or
-/// [placeholder] when none is set yet). Null [onTap] makes it read-only —
-/// e.g. a checked-in visit's time in, which is already on record.
+/// Big TIME IN / TIME OUT tile showing the time (or [placeholder] when
+/// none is set yet). The visit sheets pass a null [onTap]: both times are
+/// set automatically by the card taps and can't be edited.
 class TimeChoiceButton extends StatelessWidget {
   const TimeChoiceButton({
     super.key,
@@ -146,34 +144,3 @@ class TimeChoiceButton extends StatelessWidget {
   }
 }
 
-/// Clock picker for a TIME IN / TIME OUT button. The chosen time is taken
-/// on [initial]'s day; a result after [latest] (default: now) or before
-/// [earliest] is rejected with a message rather than silently clamped.
-Future<DateTime?> pickVisitTime(
-  BuildContext context, {
-  required DateTime initial,
-  DateTime? earliest,
-  DateTime? latest,
-}) async {
-  final picked = await showTimePicker(
-    context: context,
-    initialTime: TimeOfDay.fromDateTime(initial),
-    helpText: t('Choose the time', 'Piliin ang oras'),
-  );
-  if (picked == null || !context.mounted) return null;
-  final now = DateTime.now();
-  var result = DateTime(
-      initial.year, initial.month, initial.day, picked.hour, picked.minute);
-  final max = latest ?? now;
-  // A time later than allowed on [initial]'s day most likely meant the
-  // day before (e.g. checked in 10 PM, checking out after midnight).
-  if (result.isAfter(max)) result = result.subtract(const Duration(days: 1));
-  if (earliest != null && result.isBefore(earliest)) {
-    Toast.warn(
-        context,
-        t('Time Out must be after Time In.',
-            'Dapat mas huli ang labas kaysa sa pasok.'));
-    return null;
-  }
-  return result;
-}

@@ -66,8 +66,6 @@ Future<CheckOutOutcome> showCheckOutSheet(
   return (
     timeLines: [
       ...printer.receiptTimeLines(tx.timestamp, timeOut: tx.timeOut),
-      if (tx.plannedHours != null)
-        printer.pair('Hours Selected', '${tx.plannedHours} Hours'),
       if (tx.geoShort != null) printer.pair('GPS', tx.geoShort!),
     ],
     paymentLines: [
@@ -144,9 +142,10 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
   RegisteredVehicle? _vehicle;
   GeoTag? _geo;
 
-  /// TIME OUT follows the clock until the collector sets it.
+  /// TIME OUT is the clock: set automatically when the card is tapped,
+  /// kept current while the sheet is open, and fixed when payment is
+  /// confirmed. It can't be edited.
   DateTime _timeOut = DateTime.now();
-  bool _timeOutChosen = false;
 
   ParkingTransaction get tx => widget.tx;
   VehicleType get _type => VehicleType.fromLabel(tx.vehicleType);
@@ -223,7 +222,7 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
     LocationService.instance.current().then((g) => _geo = g);
     // Keeps the time out and the price current while the sheet is open.
     _tick = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted && !_busy && !_timeOutChosen) {
+      if (mounted && !_busy) {
         setState(() => _timeOut = DateTime.now());
       }
     });
@@ -234,17 +233,6 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
     _tick.cancel();
     _ref.dispose();
     super.dispose();
-  }
-
-  Future<void> _chooseTimeOut() async {
-    final picked = await pickVisitTime(context,
-        initial: _timeOut, earliest: tx.timestamp);
-    if (picked != null && mounted) {
-      setState(() {
-        _timeOut = picked;
-        _timeOutChosen = true;
-      });
-    }
   }
 
   Future<bool> _confirmPaid(double due) async {
@@ -274,7 +262,7 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
   }
 
   Future<void> _checkOut({required bool print}) async {
-    if (!_timeOutChosen) _timeOut = DateTime.now();
+    _timeOut = DateTime.now();
     // Fixed at the moment of confirming, so what's confirmed is what's
     // recorded even if the clock ticks into another hour meanwhile.
     final price = _price;
@@ -288,7 +276,7 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
       price: price,
       paymentMethod: _method,
       paymentRef: _method == PaymentMethod.cash ? null : _ref.text.trim(),
-      timeOut: _timeOutChosen ? _timeOut : null,
+      timeOut: _timeOut,
     );
     HapticFeedback.heavyImpact();
     final points = _points(projected);
@@ -394,8 +382,7 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
                   textAlign: TextAlign.center,
                   style: TextStyle(color: YosColors.sub, fontSize: 17)),
               const SizedBox(height: 14),
-              // TIME IN is on the ticket; TIME OUT defaults to now and can
-              // be changed (e.g. the car actually left earlier).
+              // Both times are automatic (the card taps) and read-only.
               Row(
                 children: [
                   Expanded(
@@ -413,7 +400,7 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
                       icon: Icons.logout_rounded,
                       time: _timeOut,
                       highlight: true,
-                      onTap: _busy ? null : _chooseTimeOut,
+                      onTap: null,
                     ),
                   ),
                 ],
@@ -430,9 +417,6 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
                 ),
                 child: Column(
                   children: [
-                    if (tx.plannedHours != null)
-                      row(t('Hours Selected at Time In', 'Napiling Oras sa Pasok'),
-                          '${tx.plannedHours} ${t('Hours', 'Oras')}'),
                     row(t('Total Time', 'Kabuuang oras'),
                         formatStay(price.stay)),
                     row(t('First ${price.baseHours} Hours', 'Unang ${price.baseHours} oras'),

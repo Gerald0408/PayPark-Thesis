@@ -623,6 +623,7 @@ class _TxDetailDialogState extends State<_TxDetailDialog> {
           zoneId: tx.zoneId,
           timeIn: tx.timestamp,
           rateLines: printer.rateLines(
+            timeIn: tx.timestamp,
             baseFee: fees.feeFor(type),
             baseHours: fees.baseHours,
             extraRate: fees.extraHourFeeFor(type),

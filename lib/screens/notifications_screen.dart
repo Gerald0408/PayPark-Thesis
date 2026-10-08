@@ -14,16 +14,11 @@ import '../widgets/glow_effects.dart';
 import '../widgets/visit_flow.dart';
 import 'access_requests_screen.dart';
 
-/// Hours a parked vehicle is allowed before it counts as overstaying: the
-/// hours the driver chose at TIME IN, or — for a ticket without a choice —
-/// the hours the check-in fee covers.
-int allowedHours(ParkingTransaction tx) =>
-    tx.plannedHours ?? FeeSettingsService.instance.baseHours;
-
-/// How long [tx] has been parked past its allowed hours, or null while
-/// it's still within them.
+/// How long [tx] has been parked past the hours the check-in fee covers
+/// (when extra-hour charges start), or null while it's still within them.
 Duration? overstayOf(ParkingTransaction tx, DateTime now) {
-  final over = now.difference(tx.timestamp) - Duration(hours: allowedHours(tx));
+  final over = now.difference(tx.timestamp) -
+      Duration(hours: FeeSettingsService.instance.baseHours);
   return over > Duration.zero ? over : null;
 }
 
@@ -154,8 +149,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               icon: Icons.timer_off_rounded,
                               title: '${tx.plateNumber} · ${tx.vehicleType}',
                               subtitle: t(
-                                  'Over by ${formatStay(d)} · In ${DateFormat('h:mm a').format(tx.timestamp)} · ${allowedHours(tx)} Hours chosen',
-                                  'Lampas ng ${formatStay(d)} · Pasok ${DateFormat('h:mm a').format(tx.timestamp)} · ${allowedHours(tx)} Oras'),
+                                  'Over by ${formatStay(d)} · In ${DateFormat('h:mm a').format(tx.timestamp)} · First ${FeeSettingsService.instance.baseHours} Hours Covered',
+                                  'Lampas ng ${formatStay(d)} · Pasok ${DateFormat('h:mm a').format(tx.timestamp)} · Sakop ang unang ${FeeSettingsService.instance.baseHours} oras'),
                               trailing: t('Time Out', 'Labas'),
                               onTap: () => runVisitFlow(context,
                                   open: tx, prepareCheckIn: () async => null),

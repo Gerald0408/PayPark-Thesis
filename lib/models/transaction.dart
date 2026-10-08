@@ -31,7 +31,6 @@ class ParkingTransaction {
     this.extraPaymentMethod,
     this.extraPaymentRef,
     this.lostTicketFee = 0,
-    this.plannedHours,
     this.geoLat,
     this.geoLng,
     this.geoAccuracy,
@@ -126,11 +125,6 @@ class ParkingTransaction {
   /// ticket — see FeeSettingsService.lostTicketFee.
   final double lostTicketFee;
 
-  /// Hours the driver chose to park for at TIME IN — printed on the
-  /// ticket with the expected time out and an estimated fee. Only a
-  /// guide: the actual fee is computed from the real time out.
-  final int? plannedHours;
-
   /// A time-in ticket that hasn't been paid yet: under time-in/time-out
   /// billing nothing is collected until the vehicle leaves.
   bool get isUnpaidTicket => awaitingCheckout && totalPaid == 0;
@@ -168,7 +162,6 @@ class ParkingTransaction {
     String? extraPaymentMethod,
     String? extraPaymentRef,
     double? lostTicketFee,
-    int? plannedHours,
   }) =>
       ParkingTransaction(
         trackingId: trackingId,
@@ -197,7 +190,6 @@ class ParkingTransaction {
         extraPaymentMethod: extraPaymentMethod ?? this.extraPaymentMethod,
         extraPaymentRef: extraPaymentRef ?? this.extraPaymentRef,
         lostTicketFee: lostTicketFee ?? this.lostTicketFee,
-        plannedHours: plannedHours ?? this.plannedHours,
         geoLat: geoLat ?? this.geoLat,
         geoLng: geoLng ?? this.geoLng,
         geoAccuracy: geoAccuracy ?? this.geoAccuracy,
@@ -233,7 +225,6 @@ class ParkingTransaction {
           'extra_payment_method': extraPaymentMethod ?? paymentMethod,
           if (extraPaymentRef != null) 'extra_payment_ref': extraPaymentRef,
         },
-        if (plannedHours != null) 'planned_hours': plannedHours,
         if (geoLat != null && geoLng != null) ...{
           'geo_lat': geoLat,
           'geo_lng': geoLng,
@@ -272,7 +263,6 @@ class ParkingTransaction {
           : PaymentMethod.normalize(d['extra_payment_method'] as String?),
       extraPaymentRef: d['extra_payment_ref'] as String?,
       lostTicketFee: (d['lost_ticket_fee'] as num?)?.toDouble() ?? 0,
-      plannedHours: (d['planned_hours'] as num?)?.toInt(),
       geoLat: (d['geo_lat'] as num?)?.toDouble(),
       geoLng: (d['geo_lng'] as num?)?.toDouble(),
       geoAccuracy: (d['geo_accuracy'] as num?)?.toDouble(),
