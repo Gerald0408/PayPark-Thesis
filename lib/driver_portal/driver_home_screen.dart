@@ -123,7 +123,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                         ],
                         const SizedBox(height: 10),
                         _SectionTitle(
-                            t('Parking history', 'Kasaysayan ng paradahan')),
+                            t('Parking History', 'Kasaysayan ng Paradahan')),
                         StreamBuilder<List<ParkingTransaction>>(
                           stream: _history,
                           builder: (context, hSnap) {
@@ -214,9 +214,9 @@ class _VehicleCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
               best == null
-                  ? t('Not enough points for a discount yet.',
+                  ? t('Not Enough Points For A Discount Yet.',
                       'Kulang pa ang points para sa diskwento.')
-                  : t('You can get up to $best% off your next parking.',
+                  : t('You Can Get Up To $best% Off Your Next Parking.',
                       'Puwede kang makakuha ng hanggang $best% diskwento sa susunod mong paradahan.'),
               style: TextStyle(
                   color: YosColors.ink,
@@ -234,7 +234,7 @@ class _VehicleCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
                 t(
-                    '${formatPoints(redemptionPointsCost(next) - points)} more points for $next% off',
+                    '${formatPoints(redemptionPointsCost(next) - points)} More Points For $next% Off',
                     '${formatPoints(redemptionPointsCost(next) - points)} pang points para sa $next% diskwento'),
                 style: TextStyle(color: YosColors.sub, fontSize: 15)),
           ],
@@ -259,9 +259,9 @@ class _VehicleCard extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
               t(
-                  'Show your card to the collector to use your points. '
-                      '${vehicle.entryCount} visits'
-                      '${vehicle.lastSeen != null ? ' · last ${DateFormat('MMM d, y').format(vehicle.lastSeen!)}' : ''}',
+                  'Show Your Card To The Collector To Use Your Points. '
+                      '${vehicle.entryCount} Visits'
+                      '${vehicle.lastSeen != null ? ' · Last ${DateFormat('MMM d, y').format(vehicle.lastSeen!)}' : ''}',
                   'Ipakita ang card sa collector para magamit ang points. '
                       '${vehicle.entryCount} pagbisita'
                       '${vehicle.lastSeen != null ? ' · huli ${DateFormat('MMM d, y').format(vehicle.lastSeen!)}' : ''}'),
@@ -310,7 +310,7 @@ class _HistoryRow extends StatelessWidget {
                                 '${formatStay(tx.stayDuration)}')
                         : tx.awaitingCheckout
                             ? t(
-                                'In ${DateFormat('hh:mm a').format(tx.timestamp)} · still parked',
+                                'In ${DateFormat('hh:mm a').format(tx.timestamp)} · Still Parked',
                                 'Pasok ${DateFormat('hh:mm a').format(tx.timestamp)} · nakaparada pa')
                             : t('In ${DateFormat('hh:mm a').format(tx.timestamp)}',
                                 'Pasok ${DateFormat('hh:mm a').format(tx.timestamp)}'),

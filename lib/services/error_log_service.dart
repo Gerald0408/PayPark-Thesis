@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
+import '../core/names.dart';
+
 /// One captured app error — see [ErrorLogService].
 class ErrorLogEntry {
   ErrorLogEntry({
@@ -43,11 +45,24 @@ class ErrorLogEntry {
       stack: d['stack'] as String?,
       where: d['where'] as String?,
       fatal: d['fatal'] == true,
-      platform: d['platform'] as String?,
+      platform: _platformLabel(d['platform'] as String?),
       userId: d['user_id'] as String?,
-      userName: d['user_name'] as String?,
+      // Stored however Firebase Auth had it (e.g. "marian dizon"); shown
+      // as a proper name.
+      userName: switch (d['user_name']) {
+        final String name => formatPersonName(name),
+        _ => null,
+      },
     );
   }
+
+  /// "android" -> "Android", "ios" -> "iOS", "web" -> "Web".
+  static String? _platformLabel(String? raw) => switch (raw) {
+        null || '' => raw,
+        'ios' => 'iOS',
+        'macOS' || 'macos' => 'macOS',
+        _ => raw[0].toUpperCase() + raw.substring(1),
+      };
 }
 
 /// App-wide error log: catches every uncaught Flutter/platform error, plus
