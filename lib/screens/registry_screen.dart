@@ -148,7 +148,7 @@ class _RegistryScreenState extends State<RegistryScreen> {
       );
     } catch (e) {
       if (mounted) {
-        Toast.error(context, t("Couldn't export photos: $e", 'Hindi na-export: $e'));
+        Toast.failure(context, t("Couldn't export photos.", 'Hindi na-export.'), e);
       }
     } finally {
       if (mounted) setState(() => _transferringPhotos = false);
@@ -177,7 +177,7 @@ class _RegistryScreenState extends State<RegistryScreen> {
       }
     } catch (e) {
       if (mounted) {
-        Toast.error(context, t("Couldn't import photos: $e", 'Hindi na-import: $e'));
+        Toast.failure(context, t("Couldn't import photos.", 'Hindi na-import.'), e);
       }
     } finally {
       if (mounted) setState(() => _transferringPhotos = false);
@@ -971,8 +971,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
       // navigation, just the button quietly stopping — leaving no way to
       // tell "saved" apart from "did nothing" from the UI alone.
       if (mounted) {
-        Toast.error(context,
-            t("Couldn't save: $e", 'Hindi na-save: $e'));
+        Toast.failure(context, t("Couldn't save.", 'Hindi na-save.'), e);
       }
     } finally {
       if (mounted) setState(() => _busy = false);

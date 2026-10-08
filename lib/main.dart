@@ -87,7 +87,9 @@ class YosApp extends StatelessWidget {
     // rather than pulling it from an InheritedWidget -- the only way those
     // all pick up the new language is a fresh build from here down.
     return ListenableBuilder(
-      listenable: LocaleController.instance,
+      // Also rebuilds when the signed-in role's color palette changes (see
+      // YosColors.role).
+      listenable: Listenable.merge([LocaleController.instance, YosColors.role]),
       builder: (context, _) {
         return MaterialApp(
           title: 'Delivery',

@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../core/roles.dart';
 import '../core/theme.dart';
 import '../models/collector.dart';
 import '../services/firestore_service.dart';
@@ -253,12 +254,16 @@ class _ProfileBodyState extends State<_ProfileBody> {
   /// a generic person icon otherwise. No self-service edit here: profile photo uploads
   /// depended on Firebase Storage, which isn't set up for this project, so
   /// the avatar is display-only until/unless that's provisioned.
+  AppRole _roleOf(Collector me) =>
+      AppRole.of(isSuperAdmin: _isSuperAdmin, isAdmin: me.isAdmin);
+
   Widget _avatar(Collector me, {required double size}) {
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: YosColors.accentDeep,
+        // Role color: gold / royal blue / teal (AppRole).
+        color: _roleOf(me).color,
         borderRadius: BorderRadius.circular(size * 0.32),
         image: me.photoUrl == null
             ? null
@@ -268,8 +273,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
       alignment: Alignment.center,
       child: me.photoUrl != null
           ? null
-          : Icon(Icons.person_rounded,
-              size: size * 0.6, color: YosColors.onAccent),
+          : Icon(_roleOf(me).icon, size: size * 0.6, color: Colors.white),
     );
   }
 
@@ -381,26 +385,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
                                 fontWeight: FontWeight.w800,
                                 fontSize: 18)),
                         const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          // Same amber/gold accentDeep pill for both roles —
-                          // see the avatar above for why this dropped the
-                          // separate mint/seafoam Collector tint.
-                          decoration: BoxDecoration(
-                              color: YosColors.accentDeep,
-                              borderRadius: BorderRadius.circular(999)),
-                          child: Text(
-                              _isSuperAdmin
-                                  ? t('Super Admin', 'Super Admin')
-                                  : me.isAdmin
-                                      ? t('Admin', 'Tagapangasiwa')
-                                      : t('Collector', 'Kolektor'),
-                              style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w800,
-                                  color: YosColors.onAccent)),
-                        ),
+                        RolePill(_roleOf(me)),
                       ],
                     ),
                   ),

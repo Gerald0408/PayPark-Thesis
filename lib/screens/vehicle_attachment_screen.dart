@@ -171,8 +171,7 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
           rawText: OcrReadingOrder.reconstruct(recognized));
     } catch (e) {
       if (mounted) {
-        Toast.error(context,
-            t("Couldn't import photo: $e", 'Hindi na-import ang litrato: $e'));
+        Toast.failure(context, t("Couldn't import photo.", 'Hindi na-import ang litrato.'), e);
       }
     }
   }

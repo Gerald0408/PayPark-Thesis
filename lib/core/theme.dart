@@ -28,6 +28,18 @@ class YosColors {
   static const bool _dark = false;
   static bool get isDark => _dark;
 
+  // ---- Signed-in role ----
+  // Every role uses the same colors (the design's navy); the role is kept
+  // so collectors get larger text (see SunModeSwitcher). Set by the
+  // dashboard once the role is known, reset to admin on sign-out.
+  static final ValueNotifier<ThemeRole> role =
+      ValueNotifier<ThemeRole>(ThemeRole.admin);
+
+  static void setRole(ThemeRole r) {
+    if (role.value != r) role.value = r;
+  }
+
+
   // ---- Canvas & ink (brightness-aware) ----
   // Every neutral below is now a blue-tinted equivalent of what it
   // replaced — light mode's used to be warm-cream-neutral, dark mode's
@@ -39,9 +51,11 @@ class YosColors {
   // mintLight/mossLight below reuse the palette's other pale stops
   // directly; the rest here are derived to match, since the given palette
   // doesn't name a neutral-gray or a dark-canvas stop.
-  static const Color bgLight = Color(0xFFD0E3FF); // palette's pale blue
+  static const Color bgLight = Color(0xFFF2F4F8); // design's light gray
   static const Color bgDark = Color(0xFF10141F); // derived dark navy-black
-  static Color get bg => _dark ? bgDark : bgLight;
+  static Color get bg => _dark
+      ? bgDark
+      : bgLight;
 
   static const Color bgDeepLight = Color(0xFFFFFFFF); // bottom nav bar
   static const Color bgDeepDark = Color(0xFF171D30);
@@ -61,14 +75,14 @@ class YosColors {
 
   // Slate blue-gray, not a warm gray — kept in the same cool family as the
   // rest of this palette instead of clashing against it.
-  static const Color subLight = Color(0xFF6B7A99); // slate blue-gray
+  static const Color subLight = Color(0xFF5B6478); // design's slate gray
   static const Color subDark = Color(0xFF9AA6C2); // light slate blue-gray
   static Color get sub => _dark ? subDark : subLight;
 
   /// Neutral divider/fill tone. Not wired into [glassBorder]/[gridLine]
   /// below (those stay alpha-based hairlines), but a real light-neutral
   /// fill any screen can reach for instead of inventing one inline.
-  static const Color hairlineLight = Color(0xFFDCE6F5); // pale blue-gray
+  static const Color hairlineLight = Color(0xFFE3E7EF); // pale gray
   static const Color hairlineDark = Color(0xFF2A3350); // dark blue-gray
   static Color get hairline => _dark ? hairlineDark : hairlineLight;
 
@@ -93,17 +107,25 @@ class YosColors {
   // below) — it has to stay pale in *both* modes for that pairing to
   // hold, same as it always has, regardless of which end of the palette
   // the primary accent itself now sits at.
-  static const Color accentDeepLight = Color(0xFF081F5C); // deep navy
-  static const Color accentLight = Color(0xFF334EAC); // royal blue
-  static const Color accentSoftLight = Color(0xFFE7F1FF); // pale blue wash
+  static const Color accentDeepLight = Color(0xFF0F2260); // design's deep navy
+  static const Color accentLight = Color(0xFF14296B); // design's navy
+  static const Color accentSoftLight = Color(0xFFE8ECF7); // pale navy wash
 
   static const Color accentDeepDark = Color(0xFF7096D1); // medium blue
   static const Color accentDark = Color(0xFFD0E3FF); // pale bright blue
   static const Color accentSoftDark = Color(0xFFF9FCFF); // palest wash
 
-  static Color get accent => _dark ? accentDark : accentLight;
-  static Color get accentDeep => _dark ? accentDeepDark : accentDeepLight;
-  static Color get accentSoft => _dark ? accentSoftDark : accentSoftLight;
+  // Gold accent on navy (Super Admin), royal blue (Admin), teal (Collector).
+  // Both accents keep white text readable (contrast 4.5:1 or better).
+  static Color get accent => _dark
+      ? accentDark
+      : accentLight;
+  static Color get accentDeep => _dark
+      ? accentDeepDark
+      : accentDeepLight;
+  static Color get accentSoft => _dark
+      ? accentSoftDark
+      : accentSoftLight;
 
   /// 20%-alpha version of the current mode's [accent] — derived so it
   /// always tracks whichever accent is live.
@@ -135,13 +157,17 @@ class YosColors {
   // given palette's own pale stops directly, between accentSoftLight and
   // accentLight in saturation, the same "paler/deeper" shape this pair
   // has always used.
-  static const Color mintLight = Color(0xFFF9FCFF); // palest palette stop
+  static const Color mintLight = Color(0xFFF7F8FB); // palest gray
   static const Color mintDark = Color(0xFF16224A); // muted dark navy
-  static Color get mint => _dark ? mintDark : mintLight;
+  static Color get mint => _dark
+      ? mintDark
+      : mintLight;
 
-  static const Color mossLight = Color(0xFFD0E3FF); // deepest, most saturated
+  static const Color mossLight = Color(0xFFE6EAF5); // icon-box blue-gray
   static const Color mossDark = Color(0xFF081F5C); // deep navy (palette stop)
-  static Color get moss => _dark ? mossDark : mossLight;
+  static Color get moss => _dark
+      ? mossDark
+      : mossLight;
 
   // Legacy aliases from the earlier six-shade (then three-shade) palette
   // — collapsed onto the two above so every existing call site keeps
@@ -586,3 +612,6 @@ RadialGradient get kAmbientGlow => RadialGradient(
         const Color(0x00F2F9F7),
       ],
     );
+
+/// Which role's palette [YosColors] uses — see [YosColors.role].
+enum ThemeRole { superAdmin, admin, collector }

@@ -63,10 +63,11 @@ Future<void> grantAccessRequestReset(
         .resolveAccessRequest(request.id, newUsername: newUsername);
   } catch (e) {
     if (context.mounted) {
-      Toast.error(
+      Toast.failure(
           context,
-          t('Reset succeeded, but couldn\'t clear the request: $e',
-              'Matagumpay ang reset, pero hindi na-clear ang request: $e'));
+          t("Reset worked, but the request couldn't be cleared.",
+              'Gumana ang reset, pero hindi na-clear ang request.'),
+          e);
     }
   }
 }

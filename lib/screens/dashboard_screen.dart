@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../core/roles.dart';
 import '../core/theme.dart';
 import '../core/names.dart';
 import '../models/access_request.dart';
@@ -57,6 +58,21 @@ class _DashboardScreenState extends State<DashboardScreen>
   // Error Logs are the Super Admin's alone (technical, final control).
   bool _isSuperAdmin = false;
   StreamSubscription<bool>? _superSub;
+
+  /// Whether currentUserIsAdmin has answered yet — until then the role
+  /// (and so the app's color) isn't known, so an Admin doesn't flash teal.
+  bool _adminKnown = false;
+
+  /// Gives the whole app the signed-in role's colors (see
+  /// YosColors.role): gold/navy Super Admin, blue Admin, teal Collector.
+  void _applyRoleTheme() {
+    if (!_adminKnown) return;
+    final role = AppRole.of(isSuperAdmin: _isSuperAdmin, isAdmin: _isAdmin);
+    YosColors.setRole(role.themeRole);
+    if (role == AppRole.collector) {
+      LocaleController.instance.preferForCollector();
+    }
+  }
   StreamSubscription<List<AccessRequest>>? _requestsSub;
 
   // Admin-only overstay alerts for the bell — see NotificationsScreen.
@@ -165,13 +181,16 @@ class _DashboardScreenState extends State<DashboardScreen>
     _superSub = repo.currentUserIsSuperAdmin.listen(
       (v) {
         if (mounted) setState(() => _isSuperAdmin = v);
+        _applyRoleTheme();
       },
       onError: (Object e) =>
           debugPrint('currentUserIsSuperAdmin error (ignored): $e'),
     );
     _adminSub = repo.currentUserIsAdmin.listen(
       (v) {
+        _adminKnown = true;
         if (mounted) setState(() => _isAdmin = v);
+        _applyRoleTheme();
         // Only admins can read access_requests (see firestore.rules) —
         // start or stop listening in step with admin status instead of
         // always subscribing and letting a non-admin's read fail.
@@ -256,6 +275,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     repo.removeListener(_onChange);
     _adminSub?.cancel();
     _superSub?.cancel();
+    // Signed out: back to the default blue (landing / sign-in screens).
+    // After this frame — notifying mid-dispose would rebuild a locked tree.
+    Future.microtask(() => YosColors.setRole(ThemeRole.admin));
     _requestsSub?.cancel();
     _parkedSub?.cancel();
     _overstayTick?.cancel();
@@ -619,6 +641,35 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 ),
                               ),
 
+                            // A collector's two everyday jobs, as big
+                            // buttons up top instead of tiles in the grid.
+                            if (!_isAdmin) ...[
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _BigAction(
+                                      icon: Icons.contactless_rounded,
+                                      label: t('Scan RFID Card',
+                                          'I-scan ang RFID Card'),
+                                      filled: true,
+                                      onTap: () =>
+                                          _open(const RfidScanScreen()),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: _BigAction(
+                                      icon: Icons.edit_note_rounded,
+                                      label: t('Manual Entry',
+                                          'Manu-manong Entry'),
+                                      onTap: () =>
+                                          _open(const VehicleEntryScreen()),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                            ],
                             Padding(
                               padding:
                                   const EdgeInsets.only(left: 4, bottom: 4),
@@ -713,18 +764,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           title: t('RFID Points', 'RFID Points'),
           onTap: () => _open(const RfidPointsScreen()),
         ),
-        if (!_isAdmin)
-          _NavTile(
-            icon: Icons.contactless_rounded,
-            title: t('Scan RFID Card', 'I-scan ang RFID Card'),
-            onTap: () => _open(const RfidScanScreen()),
-          ),
-        if (!_isAdmin)
-          _NavTile(
-            icon: Icons.edit_note_rounded,
-            title: t('Manual Entry', 'Manu-manong Entry'),
-            onTap: () => _open(const VehicleEntryScreen()),
-          ),
+        // Scan RFID Card / Manual Entry are the big buttons above the
+        // grid for collectors (see _BigAction).
         _NavTile(
           icon: Icons.menu_book_rounded,
           title: t('Daily Blotter', 'Blotter'),
@@ -1113,6 +1154,59 @@ class _AverageCard extends StatelessWidget {
   }
 }
 
+/// Big, easy-to-hit button for a collector's main jobs (Scan RFID Card,
+/// Manual Entry) — [filled] in the role color for the primary one,
+/// outlined for the other.
+class _BigAction extends StatelessWidget {
+  const _BigAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.filled = false,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = filled ? Colors.white : YosColors.accentDeep;
+    return Material(
+      color: filled ? YosColors.accent : YosColors.surface,
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          height: 96,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            border: filled
+                ? null
+                : Border.all(color: YosColors.accent, width: 2),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: fg, size: 34),
+              const SizedBox(height: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(label,
+                    maxLines: 1,
+                    style: TextStyle(
+                        color: fg, fontSize: 16, fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _NavTile extends StatelessWidget {
   const _NavTile({
     this.icon,
@@ -1130,15 +1224,12 @@ class _NavTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Compact icon-circle-over-label tile. Card fill is accent (royal
-    // blue, #334EAC) in light mode rather than plain white or the darker
-    // navy accentDeep — a solid white card read as disconnected from the
-    // pale-blue backdrop it sits on, and the tile stays clearly darker
-    // than that backdrop either way. Dark mode keeps its black cards,
-    // unchanged.
+    // Compact icon-over-label tile, in the design's colors: a white card
+    // with a navy icon in a pale blue-gray box — calm and easy to read in
+    // sunlight.
     return GlassCard(
       onTap: onTap,
-      color: YosColors.isDark ? Colors.black : YosColors.accent,
+      color: YosColors.surface,
       borderRadius: 20,
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
       child: Column(
@@ -1148,32 +1239,18 @@ class _NavTile extends StatelessWidget {
           Container(
             width: 34,
             height: 34,
-            // White in light mode — the card fill is a dark accent color
-            // there, so a white badge reads as a clean, distinct chip
-            // rather than blending into a same-hue circle. Dark mode keeps
-            // the accent-colored circle: its card fill is black, so the
-            // accent already pops fine there.
             decoration: BoxDecoration(
-                color: YosColors.isDark ? YosColors.accent : Colors.white,
-                shape: BoxShape.circle),
-            // Fixed dark icon, not YosColors.onAccentSoft: onAccent flips to
-            // white in light mode now (this palette's light-mode accent is
-            // dark navy, needing white text there), but this circle is
-            // hardcoded white regardless of mode, so its icon always needs
-            // dark ink instead, not whatever onAccent says for the current
-            // mode. Dark mode's circle is accent-colored (pale blue), and
-            // that also happens to need dark ink — so this fixed value is
-            // correct in both cases, just no longer expressible as
-            // onAccent since onAccent no longer means "dark" everywhere.
+                color: YosColors.moss,
+                borderRadius: BorderRadius.circular(10)),
             child: glyph != null
                 ? Center(
                     child: Text(glyph!,
-                        style: const TextStyle(
-                            color: Color(0xFF1B1B1B),
+                        style: TextStyle(
+                            color: YosColors.accent,
                             fontSize: 18,
                             fontWeight: FontWeight.w900,
                             height: 1)))
-                : Icon(icon, color: const Color(0xFF1B1B1B), size: 17),
+                : Icon(icon, color: YosColors.accent, size: 17),
           ),
           const SizedBox(height: 4),
           // Flexible + FittedBox, not a bare Text: at a bumped-up
@@ -1192,11 +1269,7 @@ class _NavTile extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      // Card fill is dark in both modes now (accentDeep in
-                      // light, black in dark), so the label needs a fixed
-                      // light color rather than YosColors.ink, which
-                      // assumes a light canvas in light mode.
-                      color: YosColors.isDark ? YosColors.ink : Colors.white,
+                      color: YosColors.ink,
                       fontWeight: FontWeight.w700,
                       fontSize: 12,
                       height: 1.15)),

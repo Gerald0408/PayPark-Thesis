@@ -54,70 +54,55 @@ Future<CheckOutOutcome> showCheckOutSheet(
   return result == true ? CheckOutOutcome.done : CheckOutOutcome.cancelled;
 }
 
-/// What a visit's time-out receipt prints — shared by the paper
+/// What a visit's time-out receipt shows — shared by the paper
 /// ([printCheckOutReceipt]) and the on-screen preview so they never
 /// disagree. [tx] is the visit as checked out (or as it will be).
-({List<String> timeLines, List<String> paymentLines, List<String> closingLines})
-    checkOutReceiptParts(ParkingTransaction tx) {
-  final printer = PrinterService.instance;
-  String php(double v) => 'PHP ${v.toStringAsFixed(2)}';
+TimeOutReceipt checkOutReceipt(ParkingTransaction tx,
+    {bool reprint = false, ReceiptPoints? points}) {
   final baseHours = FeeSettingsService.instance.baseHours;
   final rate = tx.extraHours > 0 ? tx.extraFee / tx.extraHours : 0.0;
-  return (
-    timeLines: [
-      ...printer.receiptTimeLines(tx.timestamp, timeOut: tx.timeOut),
-      if (tx.geoShort != null) printer.pair('GPS', tx.geoShort!),
-    ],
-    paymentLines: [
-      printer.divider,
-      printer.pair('First $baseHours Hours', php(tx.fee + tx.discount)),
+  final hours = tx.extraHours == 1 ? 'Hour' : 'Hours';
+  return TimeOutReceipt(
+    letterhead: kReceiptLetterhead,
+    ordinance: kOrdinanceRef,
+    trackingId: tx.trackingId,
+    timeIn: tx.timestamp,
+    timeOut: tx.timeOut ?? tx.timestamp,
+    plateNumber: tx.plateNumber,
+    driverName: tx.driverName,
+    vehicleType: tx.vehicleType,
+    zoneId: tx.zoneId,
+    breakdown: [
+      ('First $baseHours Hours', tx.fee + tx.discount),
       if (tx.extraFee > 0)
-        printer.pair('Extra ${tx.extraHours} Hours x ${rate.toStringAsFixed(0)}',
-            php(tx.extraFee)),
-      if (tx.lostTicketFee > 0)
-        printer.pair('Lost Ticket', php(tx.lostTicketFee)),
-      if (tx.discount > 0)
-        printer.pair('Points Discount', '-${php(tx.discount)}'),
-      printer.pair('TOTAL PAID', php(tx.totalPaid)),
-      ...printer.receiptPaymentLines(
-          PaymentMethod.label(tx.extraPaymentMethod ?? tx.paymentMethod),
-          tx.extraPaymentRef ?? tx.paymentRef),
+        ('Extra ${tx.extraHours} $hours x ${rate.toStringAsFixed(0)}',
+            tx.extraFee),
+      if (tx.lostTicketFee > 0) ('Lost Ticket', tx.lostTicketFee),
+      if (tx.discount > 0) ('Points Discount', -tx.discount),
     ],
-    closingLines: [
-      if (tx.collectorName != null) 'Collector: ${tx.collectorName}',
-      if (tx.checkedOutByName != null &&
-          tx.checkedOutByName != tx.collectorName)
-        'Timed out by: ${tx.checkedOutByName}',
-      ...kReceiptFooter,
-    ],
+    totalPaid: tx.totalPaid,
+    paymentMethod:
+        PaymentMethod.label(tx.extraPaymentMethod ?? tx.paymentMethod),
+    paymentRef: tx.extraPaymentRef ?? tx.paymentRef,
+    collectorName: tx.collectorName,
+    timedOutBy: tx.checkedOutByName != null &&
+            tx.checkedOutByName != tx.collectorName
+        ? tx.checkedOutByName
+        : null,
+    points: points,
+    reprint: reprint,
   );
 }
 
-/// Prints the full time-out receipt for a checked-out [tx]: every detail,
-/// time in → time out, the price breakdown and the total paid. Also used
-/// to reprint one. [points] is the RFID points earned/redeemed and the
-/// balance after (null for a vehicle without a card, or a reprint).
+/// Prints the full time-out receipt for a checked-out [tx] in the
+/// barangay letterhead layout: every detail, time in → time out, the
+/// price breakdown and the total paid. Also used to reprint one.
+/// [points] is the RFID points earned/redeemed and the balance after
+/// (null for a vehicle without a card, or a reprint).
 Future<void> printCheckOutReceipt(ParkingTransaction tx,
-    {bool reprint = false, ReceiptPoints? points}) {
-  final parts = checkOutReceiptParts(tx);
-  return PrinterService.instance.printParkingTicket(
-    trackingId: tx.trackingId,
-    driverName: tx.driverName,
-    plateNumber: tx.plateNumber,
-    vehicleType: tx.vehicleType,
-    zoneId: tx.zoneId,
-    fee: tx.totalPaid,
-    timestamp: tx.timeOut ?? tx.timestamp,
-    header: kReceiptHeader,
-    footer: kOrdinanceRef,
-    banner: '*** TIME OUT ***',
-    reprint: reprint,
-    points: points,
-    timeLines: parts.timeLines,
-    paymentLines: parts.paymentLines,
-    closingLines: parts.closingLines,
-  );
-}
+        {bool reprint = false, ReceiptPoints? points}) =>
+    PrinterService.instance.printTimeOutReceipt(
+        checkOutReceipt(tx, reprint: reprint, points: points));
 
 class _CheckOutSheet extends StatefulWidget {
   const _CheckOutSheet(
@@ -320,7 +305,6 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
     final points = _points(projected);
     final printerReady = PrinterService.instance.isConnected;
     final fees = FeeSettingsService.instance;
-    final parts = checkOutReceiptParts(projected);
     final printer = PrinterService.instance;
 
     Widget row(String label, String value,
@@ -490,25 +474,12 @@ class _CheckOutSheetState extends State<_CheckOutSheet> {
                     Image.asset('assets/icon/logo_receipt.png',
                         height: 56, width: 56, fit: BoxFit.contain),
                     const SizedBox(height: 10),
+                    // Exactly the lines the paper prints.
                     Text(
-                        [
-                          ...printer.previewLinesBeforeDriver(
-                              trackingId: tx.trackingId, header: kReceiptHeader),
-                          '*** TIME OUT ***',
-                          printer.pair('Driver', tx.driverName),
-                          ...printer.previewLinesAfterDriver(
-                            plateNumber: tx.plateNumber,
-                            vehicleType: tx.vehicleType,
-                            zoneId: tx.zoneId,
-                            fee: projected.totalPaid,
-                            timestamp: _timeOut,
-                            footer: kOrdinanceRef,
-                            closingLines: parts.closingLines,
-                            points: points,
-                            paymentLines: parts.paymentLines,
-                            timeLines: parts.timeLines,
-                          ),
-                        ].join('\n'),
+                        printer
+                            .timeOutReceiptLines(
+                                checkOutReceipt(projected, points: points))
+                            .join('\n'),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                             color: YosColors.ink,
