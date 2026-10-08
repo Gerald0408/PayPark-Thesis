@@ -55,7 +55,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isAdmin = false;
   List<AccessRequest> _pendingRequests = const [];
   StreamSubscription<bool>? _adminSub;
-  // Error Logs are the Super Admin's alone (technical, final control).
+  // Whether this account is the Super Admin (see YosRepository).
   bool _isSuperAdmin = false;
   StreamSubscription<bool>? _superSub;
 
@@ -317,11 +317,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   String _greeting() {
     final h = DateTime.now().hour;
-    final role = _isSuperAdmin
-        ? t('Super Admin', 'Super Admin')
-        : _isAdmin
-            ? t('Admin', 'Admin')
-            : t('Collector', 'Kolektor');
+    final role = _isAdmin ? t('Admin', 'Admin') : t('Collector', 'Kolektor');
     if (h < 12) return '${t('Good Morning', 'Magandang Umaga')}, $role';
     if (h < 18) return '${t('Good Afternoon', 'Magandang Hapon')}, $role';
     return '${t('Good Evening', 'Magandang Gabi')}, $role';
@@ -777,7 +773,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             title: t('Collection Reports', 'Ulat ng Koleksyon'),
             onTap: () => _open(const ReportsScreen()),
           ),
-        if (_isSuperAdmin)
+        if (_isAdmin)
           _NavTile(
             icon: Icons.bug_report_rounded,
             title: t('Error Logs', 'Mga Error Log'),
@@ -843,7 +839,9 @@ class _TodayCollectionsState extends State<_TodayCollections> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          height: 84,
+          // Grows with the text size (collectors get larger text), so the
+          // label / total / % rows never overflow.
+          height: MediaQuery.textScalerOf(context).scale(84),
           child: PageView.builder(
             controller: _controller,
             itemCount: _TodayCollections._pageCount,
@@ -1224,12 +1222,11 @@ class _NavTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Compact icon-over-label tile, in the design's colors: a white card
-    // with a navy icon in a pale blue-gray box — calm and easy to read in
-    // sunlight.
+    // Compact icon-circle-over-label tile, in the original colors: a
+    // royal-blue card with a white circle and dark icon, white label.
     return GlassCard(
       onTap: onTap,
-      color: YosColors.surface,
+      color: YosColors.isDark ? Colors.black : YosColors.accent,
       borderRadius: 20,
       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
       child: Column(
@@ -1240,17 +1237,17 @@ class _NavTile extends StatelessWidget {
             width: 34,
             height: 34,
             decoration: BoxDecoration(
-                color: YosColors.moss,
-                borderRadius: BorderRadius.circular(10)),
+                color: YosColors.isDark ? YosColors.accent : Colors.white,
+                shape: BoxShape.circle),
             child: glyph != null
                 ? Center(
                     child: Text(glyph!,
-                        style: TextStyle(
-                            color: YosColors.accent,
+                        style: const TextStyle(
+                            color: Color(0xFF1B1B1B),
                             fontSize: 18,
                             fontWeight: FontWeight.w900,
                             height: 1)))
-                : Icon(icon, color: YosColors.accent, size: 17),
+                : Icon(icon, color: const Color(0xFF1B1B1B), size: 17),
           ),
           const SizedBox(height: 4),
           // Flexible + FittedBox, not a bare Text: at a bumped-up
@@ -1269,7 +1266,7 @@ class _NavTile extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      color: YosColors.ink,
+                      color: YosColors.isDark ? YosColors.ink : Colors.white,
                       fontWeight: FontWeight.w700,
                       fontSize: 12,
                       height: 1.15)),

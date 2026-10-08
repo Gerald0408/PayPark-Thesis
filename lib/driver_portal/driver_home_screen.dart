@@ -70,11 +70,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                 itemBuilder: (_) => [
                   PopupMenuItem(
                       value: 'pin',
-                      child: Text(t('Change my PIN', 'Palitan ang PIN ko'),
+                      child: Text(t('Change My PIN', 'Palitan ang PIN Ko'),
                           style: const TextStyle(fontSize: 17))),
                   PopupMenuItem(
                       value: 'out',
-                      child: Text(t('Sign out', 'Mag-sign out'),
+                      child: Text(t('Sign Out', 'Mag-sign Out'),
                           style: const TextStyle(fontSize: 17))),
                 ],
               ),
@@ -478,7 +478,7 @@ class _ChangePinDialogState extends State<_ChangePinDialog> {
           ),
         );
     return AlertDialog(
-      title: Text(t('Change my PIN', 'Palitan ang PIN ko')),
+      title: Text(t('Change My PIN', 'Palitan ang PIN Ko')),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,

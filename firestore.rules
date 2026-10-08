@@ -403,7 +403,7 @@ service cloud.firestore {
     // file one — errors happen before Face ID enrollment too — but only
     // for itself, and only admins can read them back. Append-only.
     match /error_logs/{logId} {
-      allow read: if isSuperAdmin(); // technical logs: Super Admin only
+      allow read: if isAdmin();
       allow create: if request.auth != null
         && request.resource.data.user_id == request.auth.uid
         && request.resource.data.keys().hasOnly([

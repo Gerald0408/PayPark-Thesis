@@ -262,7 +262,6 @@ class _ProfileBodyState extends State<_ProfileBody> {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        // Role color: gold / royal blue / teal (AppRole).
         color: _roleOf(me).color,
         borderRadius: BorderRadius.circular(size * 0.32),
         image: me.photoUrl == null
@@ -273,7 +272,8 @@ class _ProfileBodyState extends State<_ProfileBody> {
       alignment: Alignment.center,
       child: me.photoUrl != null
           ? null
-          : Icon(_roleOf(me).icon, size: size * 0.6, color: Colors.white),
+          : Icon(_roleOf(me).icon,
+              size: size * 0.6, color: _roleOf(me).onColor),
     );
   }
 

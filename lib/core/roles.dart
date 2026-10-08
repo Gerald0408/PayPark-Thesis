@@ -3,21 +3,26 @@ import 'package:flutter/material.dart';
 import '../services/locale_controller.dart';
 import 'theme.dart';
 
-/// The three account roles and their colors — on role badges, avatar
-/// circles and role pills, and (via [themeRole] / YosColors.setRole) as
-/// the whole app's accent once that role is signed in.
+/// The three account roles — their label, icon and badge color (the
+/// app's original navy / pale blue), plus [themeRole] for
+/// YosColors.setRole (collectors' larger text).
 enum AppRole {
-  superAdmin(Color(0xFF8C6D0F), Icons.workspace_premium_rounded),
-  admin(Color(0xFF334EAC), Icons.shield_rounded),
-  collector(Color(0xFF17785D), Icons.person_rounded);
+  superAdmin(Icons.workspace_premium_rounded),
+  admin(Icons.shield_rounded),
+  collector(Icons.person_rounded);
 
-  const AppRole(this.color, this.icon);
+  const AppRole(this.icon);
 
-  /// Gold (Super Admin), royal blue (Admin), teal green (Collector) —
-  /// the same accents the whole app takes per role (YosColors), all
-  /// readable with white on top.
-  final Color color;
   final IconData icon;
+
+  /// The app's original badge colors: deep navy for Super Admin and
+  /// Admin, pale blue for Collectors.
+  Color get color =>
+      this == AppRole.collector ? YosColors.mint : YosColors.accentDeep;
+
+  /// Icon / text color on top of [color].
+  Color get onColor =>
+      this == AppRole.collector ? YosColors.ink : YosColors.onAccent;
 
   static AppRole of({required bool isSuperAdmin, required bool isAdmin}) =>
       isSuperAdmin
@@ -55,13 +60,13 @@ class RolePill extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(role.icon, size: fontSize + 2, color: Colors.white),
+            Icon(role.icon, size: fontSize + 2, color: role.onColor),
             const SizedBox(width: 4),
             Text(role.label,
                 style: TextStyle(
                     fontSize: fontSize,
                     fontWeight: FontWeight.w800,
-                    color: Colors.white)),
+                    color: role.onColor)),
           ],
         ),
       );

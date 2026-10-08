@@ -197,12 +197,11 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                       Container(
                         width: 52,
                         height: 52,
-                        // Role color: gold / royal blue / teal (AppRole).
                         decoration: BoxDecoration(
                             color: _role(c).color,
                             borderRadius: BorderRadius.circular(16)),
                         child: Icon(_roleIcon(c),
-                            color: Colors.white, size: 26),
+                            color: _role(c).onColor, size: 26),
                       ),
                       const SizedBox(width: 14),
                       Expanded(
@@ -406,7 +405,7 @@ class _CollectorsScreenState extends State<CollectorsScreen> {
                                         borderRadius:
                                             BorderRadius.circular(14)),
                                     child: Icon(_roleIcon(c),
-                                        color: Colors.white),
+                                        color: _role(c).onColor),
                                   ),
                                   const SizedBox(width: 12),
                                   Expanded(
