@@ -401,12 +401,12 @@ class _FloatingNavBar extends StatelessWidget {
   // than a same-colored fill that would blend straight into the bar, or a
   // plain white one that read as disconnected from the lime around it.
   static Color get _barColor =>
-      YosColors.isDark ? const Color(0xFF0C0E11) : YosColors.accent; // gold for the Super Admin
+      YosColors.isDark ? const Color(0xFF0C0E11) : YosColors.accentLight;
   static Color get _pillColor =>
-      YosColors.isDark ? const Color(0xFF1B1F24) : YosColors.accentDeep;
+      YosColors.isDark ? const Color(0xFF1B1F24) : YosColors.accentDeepLight;
   static Color get _idleCircleColor => YosColors.isDark
       ? const Color(0xFF23272E)
-      : YosColors.accentDeep.withValues(alpha: 0.25);
+      : YosColors.accentDeepLight.withValues(alpha: 0.25);
   static Color get _idleIconColor => YosColors.isDark
       ? const Color(0xFF9AA1AE)
       : YosColors.onAccent.withValues(alpha: 0.6);
