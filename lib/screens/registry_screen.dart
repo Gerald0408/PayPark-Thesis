@@ -1153,17 +1153,19 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                           const SizedBox(height: 12),
                           // Portal access for the card already saved on
                           // this vehicle (not whatever is typed above).
-                          OutlinedButton.icon(
-                            onPressed: () => showDialog<void>(
-                              context: context,
-                              builder: (_) => DriverPinDialog(
-                                rfidTag: widget.existing!.rfidTag!,
-                                driverName: widget.existing!.driverName,
+                          Center(
+                            child: OutlinedButton.icon(
+                              onPressed: () => showDialog<void>(
+                                context: context,
+                                builder: (_) => DriverPinDialog(
+                                  rfidTag: widget.existing!.rfidTag!,
+                                  driverName: widget.existing!.driverName,
+                                ),
                               ),
+                              icon: const Icon(Icons.pin_rounded),
+                              label: Text(t('Driver Portal PIN',
+                                  'PIN para sa driver portal')),
                             ),
-                            icon: const Icon(Icons.pin_rounded),
-                            label: Text(t('Driver Portal PIN',
-                                'PIN para sa driver portal')),
                           ),
                         ],
                       ],
@@ -1186,7 +1188,7 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                   Center(
                     child: Text(
                       t(
-                          '${widget.existing!.entryCount} total entries · Registered ${DateFormat('MMM d, y').format(widget.existing!.registeredAt)}',
+                          '${widget.existing!.entryCount} Total Entries · Registered${DateFormat('MMM d, y').format(widget.existing!.registeredAt)}',
                           '${widget.existing!.entryCount} kabuuang entry · narehistro noong ${DateFormat('MMM d, y').format(widget.existing!.registeredAt)}'),
                       style: TextStyle(color: YosColors.sub, fontSize: 12),
                     ),

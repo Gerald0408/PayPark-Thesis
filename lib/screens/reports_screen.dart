@@ -236,18 +236,25 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
                   children: [
-                    Center(
+                    // Full width, no check icon, one line per label — the
+                    // icon squeezed "Monthly" until its "y" wrapped below.
+                    SizedBox(
+                      width: double.infinity,
                       child: SegmentedButton<_Period>(
+                        showSelectedIcon: false,
                         segments: [
                           ButtonSegment(
                               value: _Period.daily,
-                              label: Text(t('Daily', 'Araw-araw'))),
+                              label: _SegmentLabel(
+                                  t('Day', 'Araw'))),
                           ButtonSegment(
                               value: _Period.monthly,
-                              label: Text(t('Monthly', 'Buwanan'))),
+                              label: _SegmentLabel(
+                                  t('Month', 'Buwan'))),
                           ButtonSegment(
                               value: _Period.yearly,
-                              label: Text(t('Yearly', 'Taunan'))),
+                              label: _SegmentLabel(
+                                  t('Year', 'Taon'))),
                         ],
                         selected: {_period},
                         onSelectionChanged: (v) {
@@ -343,9 +350,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
               const SizedBox(height: 4),
               Text(
                   _daily
-                      ? t('${s.count} Vehicles · Average ${_php(s.count == 0 ? 0 : s.total / s.count)} per Vehicle',
+                      ? t('${s.count} Vehicles · Average ${_php(s.count == 0 ? 0 : s.total / s.count)} Per Vehicle',
                           '${s.count} Sasakyan · Karaniwan ${_php(s.count == 0 ? 0 : s.total / s.count)} bawat sasakyan')
-                      : t('${s.count} Vehicles · Average ${_php(s.total / days.length)} per ${_yearly ? 'Month' : 'Day'}',
+                      : t('${s.count} Vehicles · Average ${_php(s.total / days.length)} Per ${_yearly ? 'Month' : 'Day'}',
                           '${s.count} Sasakyan · Karaniwan ${_php(s.total / days.length)} bawat ${_yearly ? 'buwan' : 'araw'}'),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: YosColors.sub, fontSize: 13)),
@@ -445,6 +452,19 @@ class _Section extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A period-picker label that always stays on one line.
+class _SegmentLabel extends StatelessWidget {
+  const _SegmentLabel(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text(text,
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700));
 }
 
 /// Which span Collection Reports covers.

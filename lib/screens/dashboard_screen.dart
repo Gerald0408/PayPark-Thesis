@@ -52,8 +52,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     with WidgetsBindingObserver {
   final repo = YosRepository.instance;
   bool _isAdmin = false;
+  bool _isSuperAdmin = false;
   List<AccessRequest> _pendingRequests = const [];
   StreamSubscription<bool>? _adminSub;
+  StreamSubscription<bool>? _superSub;
   StreamSubscription<List<AccessRequest>>? _requestsSub;
 
   // Admin-only overstay alerts for the bell — see NotificationsScreen.
@@ -159,6 +161,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     repo.addListener(_onChange);
+    _superSub = repo.currentUserIsSuperAdmin.listen(
+      (v) {
+        if (mounted) setState(() => _isSuperAdmin = v);
+      },
+      onError: (Object e) => debugPrint('superAdmin error (ignored): $e'),
+    );
     _adminSub = repo.currentUserIsAdmin.listen(
       (v) {
         if (mounted) setState(() => _isAdmin = v);
@@ -245,6 +253,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     WidgetsBinding.instance.removeObserver(this);
     repo.removeListener(_onChange);
     _adminSub?.cancel();
+    _superSub?.cancel();
     _requestsSub?.cancel();
     _parkedSub?.cancel();
     _overstayTick?.cancel();
@@ -284,7 +293,11 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   String _greeting() {
     final h = DateTime.now().hour;
-    final role = _isAdmin ? t('Admin', 'Admin') : t('Collector', 'Kolektor');
+    final role = _isSuperAdmin
+        ? t('Super Admin', 'Super Admin')
+        : _isAdmin
+            ? t('Admin', 'Admin')
+            : t('Collector', 'Kolektor');
     if (h < 12) return '${t('Good Morning', 'Magandang Umaga')}, $role';
     if (h < 18) return '${t('Good Afternoon', 'Magandang Hapon')}, $role';
     return '${t('Good Evening', 'Magandang Gabi')}, $role';

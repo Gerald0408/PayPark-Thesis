@@ -383,7 +383,7 @@ class _FeeDetailsDialog extends StatelessWidget {
               children: [
                 if (previous != null)
                   _detailRow(
-                      t('Previous price', 'Dating Presyo'), money.format(previous)),
+                      t('Previous Price', 'Dating Presyo'), money.format(previous)),
                 _detailRow(
                     t('Current Rate', 'Kasalukuyang Bayad'), money.format(current)),
                 if (updatedAt != null)
@@ -420,7 +420,7 @@ class _FeeDetailsDialog extends StatelessWidget {
                         Icon(Icons.edit_rounded,
                             size: 18, color: YosColors.onAccent),
                         const SizedBox(width: 8),
-                        Text(t('Edit rate', 'I-edit ang Bayad'),
+                        Text(t('Edit Rate', 'I-edit ang Bayad'),
                             style: TextStyle(
                                 color: YosColors.onAccent,
                                 fontWeight: FontWeight.w800,
@@ -511,7 +511,7 @@ class _EditFeeDialogState extends State<_EditFeeDialog> {
               children: [
                 Expanded(
                   child: Text(
-                      widget.title ?? t('Edit ${widget.type!.label} fee',
+                      widget.title ?? t('Edit ${widget.type!.label} Fee',
                           'I-edit ang bayad para sa ${widget.type!.label}'),
                       style: TextStyle(
                           fontWeight: FontWeight.w800,

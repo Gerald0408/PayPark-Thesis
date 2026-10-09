@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../core/theme.dart';
+import '../models/collector.dart';
 import '../services/error_log_service.dart';
+import '../services/firestore_service.dart';
 import '../services/locale_controller.dart';
 import '../widgets/glow_effects.dart';
 import '../widgets/toast.dart';
@@ -28,6 +32,48 @@ class _ErrorLogsScreenState extends State<ErrorLogsScreen> {
   // Grabbed once — see RegistryScreen's _vehicles for why.
   late final Stream<List<ErrorLogEntry>> _logs =
       ErrorLogService.instance.recent();
+
+  // Looked up by user_id so every log — old ones too — shows the
+  // person's role next to their name, e.g. "Carlos S. Espin · Collector".
+  List<Collector> _people = const [];
+  String? _superAdminUid;
+  StreamSubscription<List<Collector>>? _peopleSub;
+  StreamSubscription<String?>? _superSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _peopleSub = YosRepository.instance.allCollectors().listen(
+      (list) {
+        if (mounted) setState(() => _people = list);
+      },
+      onError: (Object e) => debugPrint('allCollectors error (ignored): $e'),
+    );
+    _superSub = YosRepository.instance.superAdminUid.listen(
+      (uid) {
+        if (mounted) setState(() => _superAdminUid = uid);
+      },
+      onError: (Object e) => debugPrint('superAdminUid error (ignored): $e'),
+    );
+  }
+
+  @override
+  void dispose() {
+    _peopleSub?.cancel();
+    _superSub?.cancel();
+    super.dispose();
+  }
+
+  String? _roleOf(String? uid) {
+    if (uid == null) return null;
+    if (uid == _superAdminUid) return t('Super Admin', 'Super Admin');
+    for (final c in _people) {
+      if (c.uid == uid) {
+        return c.isAdmin ? t('Admin', 'Admin') : t('Collector', 'Kolektor');
+      }
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -65,7 +111,8 @@ class _ErrorLogsScreenState extends State<ErrorLogsScreen> {
                 itemCount: logs.length,
                 itemBuilder: (_, i) => Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: _ErrorCard(entry: logs[i]),
+                  child: _ErrorCard(
+                      entry: logs[i], role: _roleOf(logs[i].userId)),
                 ),
               );
             },
@@ -77,19 +124,22 @@ class _ErrorLogsScreenState extends State<ErrorLogsScreen> {
 }
 
 class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.entry});
+  const _ErrorCard({required this.entry, this.role});
   final ErrorLogEntry entry;
+  final String? role;
 
   @override
   Widget build(BuildContext context) {
     final color = entry.fatal ? YosColors.bad : YosColors.warn;
+    final who = entry.userName ?? entry.userId ?? '-';
     return Material(
       color: YosColors.surface,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: () => showDialog<void>(
-            context: context, builder: (_) => _ErrorDetail(entry: entry)),
+            context: context,
+            builder: (_) => _ErrorDetail(entry: entry, role: role)),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -127,7 +177,7 @@ class _ErrorCard extends StatelessWidget {
                   style: TextStyle(color: YosColors.ink, fontSize: 14)),
               const SizedBox(height: 8),
               Text(
-                  '${entry.userName ?? entry.userId ?? '-'} · '
+                  '${role == null ? who : '$who $role'} · '
                   '${entry.platform ?? '-'}',
                   style: TextStyle(color: YosColors.sub, fontSize: 13)),
             ],
@@ -139,13 +189,14 @@ class _ErrorCard extends StatelessWidget {
 }
 
 class _ErrorDetail extends StatelessWidget {
-  const _ErrorDetail({required this.entry});
+  const _ErrorDetail({required this.entry, this.role});
   final ErrorLogEntry entry;
+  final String? role;
 
   String get _fullText => [
         'When: ${DateFormat('MMM d, y hh:mm:ss a').format(entry.timestamp)}',
         'Where: ${entry.where ?? '-'}',
-        'User: ${entry.userName ?? '-'} (${entry.userId ?? '-'})',
+        'User: ${entry.userName ?? '-'}${role == null ? '' : ' $role'} (${entry.userId ?? '-'})',
         'Platform: ${entry.platform ?? '-'}',
         'Fatal: ${entry.fatal}',
         '',
