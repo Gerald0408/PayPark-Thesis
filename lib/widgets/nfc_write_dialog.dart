@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -24,6 +25,9 @@ class _NfcWriteDialogState extends State<NfcWriteDialog> {
   _Stage _stage = _Stage.checking;
   String? _error;
 
+  /// What gets written to the card, shown for copying when writing fails.
+  String get _link => NfcLinkService.portalLinkFor(widget.rfidTag).toString();
+
   @override
   void initState() {
     super.initState();
@@ -45,11 +49,23 @@ class _NfcWriteDialogState extends State<NfcWriteDialog> {
       if (!mounted) return;
       setState(() {
         _stage = _Stage.failed;
-        _error = t(
-            "This phone's NFC is off or not available. Turn on NFC in "
-                'Settings, then try again.',
-            'Naka-off o walang NFC ang phone na ito. I-on ang NFC sa '
-                'Settings, tapos subukan ulit.');
+        // iPhone NFC is always on; it's "unavailable" only in the free-Apple-ID
+        // AltStore build, which has no NFC permission (see codemagic.yaml).
+        _error = defaultTargetPlatform == TargetPlatform.iOS
+            ? t(
+                "This iPhone build can't write NFC cards. Copy the link "
+                    'below, open the free "NFC Tools" app → Write → Add a '
+                    'record → URL / URI, paste it, then tap Write and hold '
+                    'the card to the phone.',
+                'Hindi kayang mag-write ng NFC card ang build na ito sa '
+                    'iPhone. Kopyahin ang link sa ibaba, buksan ang libreng '
+                    '"NFC Tools" app → Write → Add a record → URL / URI, '
+                    'i-paste ito, tapos pindutin ang Write at ilapit ang card.')
+            : t(
+                "This phone's NFC is off or not available. Turn on NFC in "
+                    'Settings, then try again.',
+                'Naka-off o walang NFC ang phone na ito. I-on ang NFC sa '
+                    'Settings, tapos subukan ulit.');
       });
       return;
     }
@@ -125,9 +141,25 @@ class _NfcWriteDialogState extends State<NfcWriteDialog> {
           Text('${t('Card', 'Card')}: ${widget.rfidTag}',
               style: TextStyle(
                   color: YosColors.ink, fontWeight: FontWeight.w700)),
+          if (_stage == _Stage.failed) ...[
+            const SizedBox(height: 8),
+            SelectableText(_link,
+                style: TextStyle(color: YosColors.ink, fontSize: 12)),
+          ],
         ],
       ),
       actions: [
+        if (_stage == _Stage.failed)
+          TextButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: _link));
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(t('Link copied', 'Nakopya ang link'))));
+            },
+            icon: const Icon(Icons.copy_rounded, size: 18),
+            label: Text(t('Copy link', 'Kopyahin ang link')),
+          ),
         if (_stage == _Stage.failed)
           TextButton(onPressed: _start, child: Text(t('Try again', 'Subukan ulit'))),
         TextButton(
