@@ -23,7 +23,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.android:
         return android;
       case TargetPlatform.iOS:
-      return web;
+        return ios;
       case TargetPlatform.macOS:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for macos - '
@@ -49,6 +49,15 @@ class DefaultFirebaseOptions {
     messagingSenderId: '326618392344',
     projectId: 'concepcion-pay-parking',
     storageBucket: 'concepcion-pay-parking.firebasestorage.app',
+  );
+
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyCkTDZRvuQinZB94O1nJ4zU7fOxwgv5psE',
+    appId: '1:326618392344:ios:25d56be759b26f948b206d',
+    messagingSenderId: '326618392344',
+    projectId: 'concepcion-pay-parking',
+    storageBucket: 'concepcion-pay-parking.firebasestorage.app',
+    iosBundleId: 'com.concepcion.yosApp',
   );
 
   static const FirebaseOptions web = FirebaseOptions(

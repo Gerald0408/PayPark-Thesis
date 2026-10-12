@@ -1,0 +1,32 @@
+# Cloud iOS build on Codemagic's free plan (https://codemagic.io).
+#
+# Builds an UNSIGNED PayPark.ipa — no paid Apple Developer account
+# needed. Install it on an iPhone with AltStore (https://altstore.io),
+# which signs it with a free Apple ID and renews it every 7 days.
+workflows:
+  ios-unsigned-ipa:
+    name: iOS unsigned IPA (for AltStore)
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Drop the NFC entitlement
+        # A free Apple ID can't sign an app that asks for NFC, so the
+        # "Write Portal Link to Card" button won't work in this build.
+        script: sed -i '' '/CODE_SIGN_ENTITLEMENTS/d' ios/Runner.xcodeproj/project.pbxproj
+      - name: Get packages
+        script: flutter pub get
+      - name: Install pods
+        script: cd ios && pod install
+      - name: Build app (no code signing)
+        script: flutter build ios --release --no-codesign --build-number=$BUILD_NUMBER
+      - name: Package PayPark.ipa
+        script: |
+          mkdir -p build/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/
+          cd build/ipa && zip -qr PayPark.ipa Payload
+    artifacts:
+      - build/ipa/PayPark.ipa

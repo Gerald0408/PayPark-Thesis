@@ -29,6 +29,8 @@ class VehicleAttachmentResult {
     required this.orCrPhotoPath,
     required this.licensePhotoUrl,
     required this.orCrPhotoUrl,
+    required this.vehiclePhotoPath,
+    required this.vehiclePhotoUrl,
   });
 
   final String driverName;
@@ -47,6 +49,10 @@ class VehicleAttachmentResult {
   /// fresh local capture hasn't been uploaded yet.
   final String? licensePhotoUrl;
   final String? orCrPhotoUrl;
+
+  /// Photo of the vehicle itself — same path/URL rules as the documents.
+  final String? vehiclePhotoPath;
+  final String? vehiclePhotoUrl;
 }
 
 /// Dedicated "attach documents" step: capture the driver's license and
@@ -65,6 +71,8 @@ class VehicleAttachmentScreen extends StatefulWidget {
     this.initialOrCrPhotoPath,
     this.initialLicensePhotoUrl,
     this.initialOrCrPhotoUrl,
+    this.initialVehiclePhotoPath,
+    this.initialVehiclePhotoUrl,
   });
 
   final String initialDriverName;
@@ -73,6 +81,8 @@ class VehicleAttachmentScreen extends StatefulWidget {
   final String? initialOrCrPhotoPath;
   final String? initialLicensePhotoUrl;
   final String? initialOrCrPhotoUrl;
+  final String? initialVehiclePhotoPath;
+  final String? initialVehiclePhotoUrl;
 
   @override
   State<VehicleAttachmentScreen> createState() =>
@@ -87,6 +97,8 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
   String? _orCrPhotoPath;
   String? _licensePhotoUrl;
   String? _orCrPhotoUrl;
+  String? _vehiclePhotoPath;
+  String? _vehiclePhotoUrl;
   VehicleType? _detectedType;
 
   /// OR/CR is optional, so its capture card stays collapsed behind an
@@ -102,6 +114,8 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
     _orCrPhotoPath = widget.initialOrCrPhotoPath;
     _licensePhotoUrl = widget.initialLicensePhotoUrl;
     _orCrPhotoUrl = widget.initialOrCrPhotoUrl;
+    _vehiclePhotoPath = widget.initialVehiclePhotoPath;
+    _vehiclePhotoUrl = widget.initialVehiclePhotoUrl;
     _showOrCr = _orCrPhotoPath != null || _orCrPhotoUrl != null;
   }
 
@@ -287,6 +301,59 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
     Toast.info(context, t('Plate read: $plate', 'Nabasang plaka: $plate'));
   }
 
+  /// Takes (or, with [fromGallery], picks) a photo of the vehicle itself.
+  /// Unlike the documents, it isn't cropped to a guide frame — the whole
+  /// vehicle should be in the shot — so it uses the system camera rather
+  /// than DocumentScanScreen. The photo is also checked for a readable
+  /// plate, which fills the Plate Number field only while it's still empty
+  /// (it never overwrites a plate that was typed or read off the OR/CR).
+  Future<void> _captureVehicle({bool fromGallery = false}) async {
+    final picked = await ImagePicker().pickImage(
+      source: fromGallery ? ImageSource.gallery : ImageSource.camera,
+      imageQuality: 85,
+      maxWidth: 1920,
+    );
+    if (picked == null || !mounted) return;
+    try {
+      final key = '${const Uuid().v4()}.jpg';
+      await VehicleDocumentCache.instance
+          .write(key, await File(picked.path).readAsBytes());
+      String? plate;
+      try {
+        final tr = TextRecognizer(script: TextRecognitionScript.latin);
+        try {
+          final recognized =
+              await tr.processImage(InputImage.fromFilePath(picked.path));
+          plate = PlateMatcher.bestMatch(PlateMatcher.clean(recognized.text));
+        } finally {
+          await tr.close();
+        }
+      } catch (_) {
+        // Plate reading is only a bonus here — the photo is still kept.
+      }
+      if (!mounted) return;
+      final fillPlate = plate != null && _plate.text.trim().isEmpty;
+      setState(() {
+        _vehiclePhotoPath = key;
+        // Same rule as the documents: a new photo means the old synced
+        // URL no longer matches, so register() must upload this one.
+        _vehiclePhotoUrl = null;
+        if (fillPlate) _plate.text = plate!;
+      });
+      Toast.info(
+          context,
+          fillPlate
+              ? t('Vehicle photo saved · Plate read: $plate',
+                  'Na-save ang larawan ng sasakyan · Nabasang plaka: $plate')
+              : t('Vehicle photo saved', 'Na-save ang larawan ng sasakyan'));
+    } catch (e) {
+      if (mounted) {
+        Toast.error(context,
+            t("Couldn't save photo: $e", 'Hindi na-save ang litrato: $e'));
+      }
+    }
+  }
+
   /// Full-screen, pinch-to-zoom view of a captured document photo — lets
   /// the collector double-check (or catch a bad auto-fill) against the
   /// real image instead of a reconstructed OCR text guess (see
@@ -323,6 +390,8 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
       orCrPhotoPath: _orCrPhotoPath,
       licensePhotoUrl: _licensePhotoUrl,
       orCrPhotoUrl: _orCrPhotoUrl,
+      vehiclePhotoPath: _vehiclePhotoPath,
+      vehiclePhotoUrl: _vehiclePhotoUrl,
     ));
   }
 
@@ -353,6 +422,25 @@ class _VehicleAttachmentScreenState extends State<VehicleAttachmentScreen> {
                               null
                           ? null
                           : () => _viewPhoto(_licensePhotoPath, _licensePhotoUrl),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                PopIn(
+                  delayMs: 30,
+                  child: GlassCard(
+                    child: _DocCaptureCard(
+                      label: t('Vehicle photo', 'Larawan ng Sasakyan'),
+                      placeholderIcon: Icons.directions_car_outlined,
+                      photoPath: _vehiclePhotoPath,
+                      photoUrl: _vehiclePhotoUrl,
+                      onScan: _captureVehicle,
+                      onImport: () => _captureVehicle(fromGallery: true),
+                      onViewPhoto: (_vehiclePhotoPath ?? _vehiclePhotoUrl) ==
+                              null
+                          ? null
+                          : () =>
+                              _viewPhoto(_vehiclePhotoPath, _vehiclePhotoUrl),
                     ),
                   ),
                 ),
@@ -490,9 +578,11 @@ class _DocCaptureCard extends StatelessWidget {
     required this.onScan,
     required this.onImport,
     this.onViewPhoto,
+    this.placeholderIcon = Icons.badge_outlined,
   });
 
   final String label;
+  final IconData placeholderIcon;
   final String? photoPath;
   final String? photoUrl;
   final VoidCallback onScan;
@@ -523,7 +613,7 @@ class _DocCaptureCard extends StatelessWidget {
                 : Container(
                     color: YosColors.surfaceHigh,
                     alignment: Alignment.center,
-                    child: Icon(Icons.badge_outlined,
+                    child: Icon(placeholderIcon,
                         color: YosColors.sub, size: 32),
                   ),
           ),

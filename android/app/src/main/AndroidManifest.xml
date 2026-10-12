@@ -7,6 +7,11 @@
     <!-- Geotag on receipts and points rewards (see LocationService). -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <!-- Phone's built-in NFC, used only to write the driver portal link
+         onto cards (see NfcLinkService). Optional, so the app still
+         installs on phones without NFC. -->
+    <uses-permission android:name="android.permission.NFC"/>
+    <uses-feature android:name="android.hardware.nfc" android:required="false"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
    <uses-feature android:name="android.hardware.camera.ar" tools:node="remove" />
     <uses-feature android:name="com.google.ar.core" tools:node="remove" />

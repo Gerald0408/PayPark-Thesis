@@ -19,6 +19,7 @@ import '../services/vehicle_document_cache.dart';
 import '../widgets/app_dialog.dart';
 import '../widgets/driver_pin_dialog.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/nfc_write_dialog.dart';
 import '../widgets/toast.dart';
 import '../widgets/glow_effects.dart';
 import '../widgets/vehicle_type_tile.dart';
@@ -828,6 +829,8 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
   String? _orCrPhotoPath;
   String? _licensePhotoUrl;
   String? _orCrPhotoUrl;
+  String? _vehiclePhotoPath;
+  String? _vehiclePhotoUrl;
 
   /// Deleting a registration is Admin-only (firestore.rules); collectors
   /// can register and edit, not delete.
@@ -855,6 +858,8 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
     _orCrPhotoPath = e?.orCrPhotoPath;
     _licensePhotoUrl = e?.driverLicensePhotoUrl;
     _orCrPhotoUrl = e?.orCrPhotoUrl;
+    _vehiclePhotoPath = e?.vehiclePhotoPath;
+    _vehiclePhotoUrl = e?.vehiclePhotoUrl;
   }
 
   /// Opens [VehicleAttachmentScreen] to capture (or retake) the driver's
@@ -874,6 +879,8 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
           initialOrCrPhotoPath: _orCrPhotoPath,
           initialLicensePhotoUrl: _licensePhotoUrl,
           initialOrCrPhotoUrl: _orCrPhotoUrl,
+          initialVehiclePhotoPath: _vehiclePhotoPath,
+          initialVehiclePhotoUrl: _vehiclePhotoUrl,
         ),
       ),
     );
@@ -885,6 +892,8 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
       _orCrPhotoPath = result.orCrPhotoPath;
       _licensePhotoUrl = result.licensePhotoUrl;
       _orCrPhotoUrl = result.orCrPhotoUrl;
+      _vehiclePhotoPath = result.vehiclePhotoPath;
+      _vehiclePhotoUrl = result.vehiclePhotoUrl;
       if (result.vehicleType != null) _type = result.vehicleType!;
     });
   }
@@ -954,6 +963,8 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
         orCrPhotoPath: _orCrPhotoPath,
         driverLicensePhotoUrl: _licensePhotoUrl,
         orCrPhotoUrl: _orCrPhotoUrl,
+        vehiclePhotoPath: _vehiclePhotoPath,
+        vehiclePhotoUrl: _vehiclePhotoUrl,
         rfidTag: _rfid.text,
       );
       HapticFeedback.mediumImpact();
@@ -1154,17 +1165,38 @@ class _RegisterVehicleScreenState extends State<RegisterVehicleScreen> {
                           // Portal access for the card already saved on
                           // this vehicle (not whatever is typed above).
                           Center(
-                            child: OutlinedButton.icon(
-                              onPressed: () => showDialog<void>(
-                                context: context,
-                                builder: (_) => DriverPinDialog(
-                                  rfidTag: widget.existing!.rfidTag!,
-                                  driverName: widget.existing!.driverName,
+                            child: Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 10,
+                              runSpacing: 8,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () => showDialog<void>(
+                                    context: context,
+                                    builder: (_) => DriverPinDialog(
+                                      rfidTag: widget.existing!.rfidTag!,
+                                      driverName: widget.existing!.driverName,
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.pin_rounded),
+                                  label: Text(t('Driver Portal PIN',
+                                      'PIN para sa driver portal')),
                                 ),
-                              ),
-                              icon: const Icon(Icons.pin_rounded),
-                              label: Text(t('Driver Portal PIN',
-                                  'PIN para sa driver portal')),
+                                // Writes the portal's web address onto the
+                                // card so tapping it on the driver's phone
+                                // opens the portal (see NfcLinkService).
+                                OutlinedButton.icon(
+                                  onPressed: () => showDialog<void>(
+                                    context: context,
+                                    barrierDismissible: false,
+                                    builder: (_) => NfcWriteDialog(
+                                        rfidTag: widget.existing!.rfidTag!),
+                                  ),
+                                  icon: const Icon(Icons.contactless_rounded),
+                                  label: Text(t('Write Portal Link to Card',
+                                      'I-write ang Portal Link sa Card')),
+                                ),
+                              ],
                             ),
                           ),
                         ],

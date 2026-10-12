@@ -16,16 +16,33 @@ class DriverLoginScreen extends StatefulWidget {
 }
 
 class _DriverLoginScreenState extends State<DriverLoginScreen> {
-  final _card = TextEditingController();
+  /// Pre-filled when the portal was opened by tapping an NFC card — the
+  /// card carries `https://concepcion-pay-parking.web.app/?card=<ID>`
+  /// (written by the collector app's NfcLinkService).
+  final _card =
+      TextEditingController(text: Uri.base.queryParameters['card'] ?? '');
   final _pin = TextEditingController();
+  final _pinFocus = FocusNode();
   bool _busy = false;
   bool _showPin = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Card already known from the tap — go straight to the PIN.
+    if (_card.text.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _pinFocus.requestFocus();
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _card.dispose();
     _pin.dispose();
+    _pinFocus.dispose();
     super.dispose();
   }
 
@@ -95,6 +112,7 @@ class _DriverLoginScreenState extends State<DriverLoginScreen> {
                     const SizedBox(height: 18),
                     TextField(
                       controller: _pin,
+                      focusNode: _pinFocus,
                       enabled: !_busy,
                       obscureText: !_showPin,
                       keyboardType: TextInputType.number,

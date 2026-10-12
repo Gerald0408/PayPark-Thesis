@@ -56,6 +56,8 @@ class VehicleRegistry {
     String? orCrPhotoPath,
     String? driverLicensePhotoUrl,
     String? orCrPhotoUrl,
+    String? vehiclePhotoPath,
+    String? vehiclePhotoUrl,
     String? rfidTag,
   }) async {
     final id = RegisteredVehicle.normalize(plateNumber);
@@ -77,6 +79,10 @@ class VehicleRegistry {
       orCrPhotoUrl = await VehicleDocumentStorage.instance.upload(
           plateKey: id, docType: 'or_cr', localKey: orCrPhotoPath);
     }
+    if (vehiclePhotoPath != null && vehiclePhotoUrl == null) {
+      vehiclePhotoUrl = await VehicleDocumentStorage.instance.upload(
+          plateKey: id, docType: 'vehicle', localKey: vehiclePhotoPath);
+    }
 
     final combined = await _buildCombinedDocument(
       plateKey: id,
@@ -84,6 +90,8 @@ class VehicleRegistry {
       driverLicensePhotoUrl: driverLicensePhotoUrl,
       orCrPhotoPath: orCrPhotoPath,
       orCrPhotoUrl: orCrPhotoUrl,
+      vehiclePhotoPath: vehiclePhotoPath,
+      vehiclePhotoUrl: vehiclePhotoUrl,
     );
 
     final v = RegisteredVehicle(
@@ -96,6 +104,8 @@ class VehicleRegistry {
       orCrPhotoPath: orCrPhotoPath,
       driverLicensePhotoUrl: driverLicensePhotoUrl,
       orCrPhotoUrl: orCrPhotoUrl,
+      vehiclePhotoPath: vehiclePhotoPath,
+      vehiclePhotoUrl: vehiclePhotoUrl,
       documentsPath: combined?.path,
       documentsUrl: combined?.url,
       rfidTag: (rfidTag == null || rfidTag.trim().isEmpty)
@@ -145,6 +155,8 @@ class VehicleRegistry {
         driverLicensePhotoUrl: v.driverLicensePhotoUrl,
         orCrPhotoPath: orCrPhotoPath,
         orCrPhotoUrl: orCrUrl,
+        vehiclePhotoPath: v.vehiclePhotoPath,
+        vehiclePhotoUrl: v.vehiclePhotoUrl,
       );
       if (combined != null) {
         data['documents_path'] = combined.path;
@@ -180,16 +192,22 @@ class VehicleRegistry {
     String? driverLicensePhotoUrl,
     String? orCrPhotoPath,
     String? orCrPhotoUrl,
+    String? vehiclePhotoPath,
+    String? vehiclePhotoUrl,
   }) async {
     final licenseBytes = await VehicleDocumentStorage.instance
         .fetchBytes(path: driverLicensePhotoPath, url: driverLicensePhotoUrl);
     final orCrBytes = await VehicleDocumentStorage.instance
         .fetchBytes(path: orCrPhotoPath, url: orCrPhotoUrl);
-    if (licenseBytes == null && orCrBytes == null) return null;
+    final vehicleBytes = await VehicleDocumentStorage.instance
+        .fetchBytes(path: vehiclePhotoPath, url: vehiclePhotoUrl);
+    if (licenseBytes == null && orCrBytes == null && vehicleBytes == null) {
+      return null;
+    }
 
     try {
-      final pdfBytes =
-          await DocumentPdf.fromJpegImages([licenseBytes, orCrBytes]);
+      final pdfBytes = await DocumentPdf.fromJpegImages(
+          [licenseBytes, orCrBytes, vehicleBytes]);
       final key = '${plateKey}_documents.pdf';
       await VehicleDocumentCache.instance.write(key, pdfBytes);
       final url = await VehicleDocumentStorage.instance
@@ -235,6 +253,12 @@ class VehicleRegistry {
             plateKey: key, docType: 'or_cr', localKey: v.orCrPhotoPath!);
         if (orCrUrl != null) update['or_cr_photo_url'] = orCrUrl;
       }
+      var vehicleUrl = v.vehiclePhotoUrl;
+      if (v.vehiclePhotoPath != null && vehicleUrl == null) {
+        vehicleUrl = await VehicleDocumentStorage.instance.upload(
+            plateKey: key, docType: 'vehicle', localKey: v.vehiclePhotoPath!);
+        if (vehicleUrl != null) update['vehicle_photo_url'] = vehicleUrl;
+      }
       // Also backfills a vehicle that predates the combined-PDF feature
       // entirely — it may already have both raw URLs synced (so the
       // checks above are no-ops) but never got a documents_path/url
@@ -246,6 +270,8 @@ class VehicleRegistry {
           driverLicensePhotoUrl: licenseUrl,
           orCrPhotoPath: v.orCrPhotoPath,
           orCrPhotoUrl: orCrUrl,
+          vehiclePhotoPath: v.vehiclePhotoPath,
+          vehiclePhotoUrl: vehicleUrl,
         );
         if (combined != null) {
           update['documents_path'] = combined.path;
@@ -267,10 +293,13 @@ class VehicleRegistry {
     final hasAnyDoc = v.driverLicensePhotoPath != null ||
         v.driverLicensePhotoUrl != null ||
         v.orCrPhotoPath != null ||
-        v.orCrPhotoUrl != null;
+        v.orCrPhotoUrl != null ||
+        v.vehiclePhotoPath != null ||
+        v.vehiclePhotoUrl != null;
     return (v.driverLicensePhotoPath != null &&
             v.driverLicensePhotoUrl == null) ||
         (v.orCrPhotoPath != null && v.orCrPhotoUrl == null) ||
+        (v.vehiclePhotoPath != null && v.vehiclePhotoUrl == null) ||
         (hasAnyDoc && v.documentsPath == null && v.documentsUrl == null);
   }
 
@@ -475,6 +504,7 @@ class VehicleRegistry {
         for (final path in [
           v.driverLicensePhotoPath,
           v.orCrPhotoPath,
+          v.vehiclePhotoPath,
           v.documentsPath
         ]) {
           if (path == null) continue;
@@ -485,6 +515,7 @@ class VehicleRegistry {
         for (final url in [
           v.driverLicensePhotoUrl,
           v.orCrPhotoUrl,
+          v.vehiclePhotoUrl,
           v.documentsUrl
         ]) {
           if (url == null) continue;
